@@ -1,2 +1,6 @@
-# error-classifier
-MONASH Winter project for building a machine learning algorithm to identify errors and winners from shots in a tennis match
+# Error Classifier
+
+This Monash Winter Project will use machine learning tools and cutting-edge tennis tracking data to find accurate ways to categorize tennis shots as errors or winners. 
+
+This project will be co-supervised by Dianne Cook <dicook@monash.edu> and Stephanie Kovalchik <skovalchik@tennis.com.au>.
+
