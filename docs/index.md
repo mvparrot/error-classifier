@@ -4,7 +4,7 @@ layout: default
 
 ## Project Background
 
-`What makes one tennis shot _better_ than another?`
+# What makes one tennis shot _better_ than another?
 
 For decades, the sport of tennis has used _unforced errors_ and _winners_ to label poor shots from the best shots in the game. But did you know that these classifications are still done by humans?! 
 
