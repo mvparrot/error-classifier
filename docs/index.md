@@ -2,49 +2,35 @@
 layout: default
 ---
 
-## Classifying Errors in Professional Tennis
+## Project Background
 
-[Link to another page](another-page).
+What makes one tennis shot _better_ than another?
 
-There should be whitespace between paragraphs.
+For decades, the sport of tennis has used _unforced errors_ and _winners_ to label poor shots from the best shots in the game. But did you know that these classifications are still done by humans? With modern tracking data, the sport is in a position to modernize the way it classifies error using machine learning approaches that could be more cost-effective and reliable than human approaches.
 
-There should be whitespace between paragraphs. We recommend including a README, or a file with information about your project.
+![tennis-hawkeye](http://www.feeltennis.net/wp-content/uploads/2012/08/tennis-ball-trajectory1.jpg)
 
-# [](#header-1)Header 1
+## Project Goals
 
-This is a normal paragraph following a header. GitHub is a code hosting platform for version control and collaboration. It lets you and others work together on projects from anywhere.
+The student will use tracking data and human labels of errors and winners to build a machine learning classifier for each type of point outcome. 
 
-## [](#header-2)Header 2
+## Specific Activities
 
-> This is a blockquote following a header.
->
-> When something is important enough, you do it even if the odds are not in your favor.
+- Get familiar with tennis tracking data
+- Merge labels from IBM Slamtracker with tracking data of shots
+- Evaluate the accuracy of different machine learning classifiers
+- Use graphics and performance metrics to summarise findings
+- Create report and presentation of findings
 
-### [](#header-3)Header 3
+## Requirements
 
-```js
-// Javascript code with syntax highlighting.
-var fun = function lang(l) {
-  dateformat.i18n = require('./lang/' + l)
-  return true;
-}
-```
+This project is intended for students with experience with R, some familiarity with machine learning, and a love of sports.
 
-```ruby
-# Ruby code with syntax highlighting
-GitHubPages::Dependencies.gems.each do |gem, version|
-  s.add_dependency(gem, "= #{version}")
-end
-```
+## Supervisors
 
-#### [](#header-4)Header 4
+The project will be supervised by Professor Di Cook (@dicook) from Monash University and Stephanie Kovalchik (@skoval), a tennis data scientist at Tennis Australia.
 
-*   This is an unordered list following a header.
-*   This is an unordered list following a header.
-*   This is an unordered list following a header.
+## Contact
 
-##### [](#header-5)Header 5
+For inquiries and questions, please contact dicook@monash.edu or skovalchik@tennis.com.au
 
-1.  This is an ordered list following a header.
-2.  This is an ordered list following a header.
-3.  This is an ordered list following a header.
