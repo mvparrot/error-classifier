@@ -39,10 +39,37 @@ library(gbm)
 library(rpart)
 library(rpart.plot)
 library(penalizedLDA)
+library(xgboost)
+library(foreign)
+library(stringr)
+library(stringi)
+
 
 
 
 ```
+
+
+
+
+### Initial Exploration of Data
+
+```{r}
+atp_serves %>% 
+  group_by(side, serve_classification) %>% 
+  summarise(n = n())
+
+atp_serves %>% 
+  group_by(server, side, serve_classification) %>% 
+  summarise(n = n()) %>% 
+  mutate(proportion = (n * 100)/sum(n))
+```
+
+
+
+
+
+
 
 
 
@@ -51,27 +78,61 @@ library(penalizedLDA)
 
 ```{r}
 
+df$server      <- as.character(df$server)
+df$receiver    <- as.character(df$receiver)
+df$winner_name <- toupper(df$winner_name)
+df$loser_name  <- toupper(df$loser_name)
+
+
+
 for (i in 1:nrow(df)) {
   
   if (df$serve_classification[i] == 0) {
     
     df$serve_classification[i] <- "Ace"
     
-  } else if (df$serve_classification[i] != 0) {
+  } else {
     
     df$serve_classification[i] <- "Other"
     
   }
   
   
+  
+  
+  if (atp_serves$serve_classification[i] == 0) {
+    
+    atp_serves$serve_classification[i] <- "Ace"
+    
+  } else {
+    
+    atp_serves$serve_classification[i] <- "Other"
+    
+  }
+  
+  
+  
+  
 }
+
+
+
 
 df$serve_classification <- as.factor(df$serve_classification)
 df$direction.change     <- as.factor(df$direction.change)
 df$winner_hand          <- as.factor(df$winner_hand)
 df$loser_hand           <- as.factor(df$loser_hand)
 df$round                <- as.factor(df$round)
+
 ```
+
+
+
+
+
+
+
+
 
 
 
@@ -86,12 +147,15 @@ df <- df %>% dplyr::select(start.x,
                            start.y, 
                            start.z, 
                            start.1:angle.change, 
-                           center.x:point,
+                           center.x:side,
                            serve_classification, 
                            winner_age,
                            loser_hand,
                            loser_age,
                            round)
+
+
+# df$server_hand <-  
 
 # Winner hand had issues with factoring, but loser hand is fine
 
@@ -128,12 +192,12 @@ ts2 <- atp_serves[-idx,]
 
 ```{r}
 
-tr_rf   <- randomForest(tr[,-c(20)],
+tr_rf   <- randomForest(tr[,-c(21)],
                         tr$serve_classification,
                         ntree=1000, 
                         importance = TRUE)
 
-pred_rf <- predict(tr_rf, ts[,-c(20)], type="class") #Prediction using test data
+pred_rf <- predict(tr_rf, ts[,-c(21)], type="class") #Prediction using test data
 
 df_rf <- data.frame(Actual = ts$serve_classification, 
                     Predicted = pred_rf,
@@ -143,12 +207,16 @@ table(Actual = ts$serve_classification, Predicted = pred_rf)
 
 
 
-rf_imp <- data.frame(Var=rownames(tr_rf$importance), tr_rf$importance) %>%
-                   arrange(desc(MeanDecreaseAccuracy))
+rf_imp <- data.frame(Var = rownames(tr_rf$importance), tr_rf$importance) %>%
+                     arrange(desc(MeanDecreaseAccuracy))
 
 varImpPlot(tr_rf, sort = TRUE)
 
 ```
+
+
+
+
 
 
 
@@ -164,10 +232,9 @@ tr_svm   <- svm(serve_classification ~ .,
                 kernel = "radial")
 
 
-pred_svm <- predict(tr_svm, ts)          #Prediction using test data
+pred_svm <- predict(tr_svm, ts)          
 df_svm   <- data.frame(Actual = ts$serve_classification, 
-                       Predicted = pred_svm,
-                       stringsAsFactors = FALSE) 
+                       Predicted = pred_svm) 
 
 
 table(ts$serve_classification, pred_svm)
@@ -203,7 +270,8 @@ df_decisiontree   <- data.frame(Actual    = ts$serve_classification,
                                 stringsAsFactors = FALSE) 
 
 
-table(Actual = ts$serve_classification, Predicted = pred_decisiontree)
+table(Actual    = ts$serve_classification, 
+      Predicted = pred_decisiontree)
 
 
 ```
@@ -218,6 +286,8 @@ table(Actual = ts$serve_classification, Predicted = pred_decisiontree)
 ### LDA
 
 ```{r}
+lda_sub_df <- 
+
 lda_model <- lda(serve_classification ~ .,                    
                  data = tr,    
                  prior = c(0.2, 0.8),         
@@ -241,15 +311,53 @@ pred_lda <- predict(lda_model, ts, type="class")
 
 ```{r}
 
-cls <- ifelse(tr[,"serve_classification"] == "Ace", 2, 1)
-set.seed(1)
-tr_plda <- PenalizedLDA(as.matrix(tr[,-c(20)]), cls, 
-                        as.matrix(ts[,-c(20)]), lambda=0.001, K=1)
+# cls <- ifelse(tr[,"serve_classification"] == "Ace", 2, 1)
+# set.seed(1)
+# tr_plda <- PenalizedLDA(as.matrix(tr[,-c(21)]), cls, 
+#                         as.matrix(ts[,-c(21)]), lambda=0.001, K=1)
+# 
+# 
+# 
+# table(Actual = ts$serve_classification, tr_plda$ypred)
 
-
-
-table(ts$class, tr_plda$ypred)
 ```
+
+
+
+
+
+
+### XGBoost
+
+```{r}
+
+# dtrain <- xgb.DMatrix(as.matrix(tr[,-c(21)]), label = cls)
+# param <- list(max.depth = 2, eta = 1, silent = 1)
+# tr_xgb <- xgb.train(param, dtrain, nthread = 2, nround = 10)
+# pxgb <- round(predict(tr_xgb, as.matrix(ts[,-c(21)])), 0)
+# table(ts$class, pxgb)
+
+```
+
+
+
+
+
+
+
+
+
+### Logit
+
+```{r}
+# tr_logit   <- glm(serve_classification ~ ., family = binomial(link="logit"), data = tr) 
+# pred_logit <- predict(tr_logit, ts$serve_classification)
+
+
+```
+
+
+
 
 
 
@@ -269,4 +377,46 @@ comparison <- data.frame(Actual = ts$serve_classification,
 
                          
 ```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+### Boxplot of Data
+
+```{r}
+
+df_sub <- gather(data = df, 
+                 key = variables, 
+                 value = stat, 
+                 start.x, 
+                 start.y, 
+                 start.z, 
+                 start.1:angle.change, 
+                 center.x:point, 
+                 winner_age,
+                 loser_age,
+                 -direction.change)
+       
+                
+ggplot(df_sub) + 
+  geom_boxplot(aes(x = serve_classification, y = stat)) + 
+  facet_wrap(~variables, scale = "free_y")
+
+
+```
+
+
 
