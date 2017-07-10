@@ -1,0 +1,272 @@
+---
+title: "Error Classifier"
+author: "Dean"
+date: "10 July 2017"
+output: word_document
+---
+
+```{r include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      warning=FALSE, 
+                      message=FALSE, 
+                      error=FALSE,
+                      cache=FALSE)
+```
+
+
+
+
+```{r}
+load("atp_serves.RData")
+df <- atp_serves
+
+
+
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(fpc) 
+library(hextri)
+library(gridExtra)
+library(GGally)
+library(ggdendro)
+library(plotly)
+library(e1071)
+library(MASS)
+library(randomForest)
+library(gbm)
+library(rpart)
+library(rpart.plot)
+library(penalizedLDA)
+
+
+
+```
+
+
+
+## Data Manipulation
+### Data Manipulation of Various Column
+
+```{r}
+
+for (i in 1:nrow(df)) {
+  
+  if (df$serve_classification[i] == 0) {
+    
+    df$serve_classification[i] <- "Ace"
+    
+  } else if (df$serve_classification[i] != 0) {
+    
+    df$serve_classification[i] <- "Other"
+    
+  }
+  
+  
+}
+
+df$serve_classification <- as.factor(df$serve_classification)
+df$direction.change     <- as.factor(df$direction.change)
+df$winner_hand          <- as.factor(df$winner_hand)
+df$loser_hand           <- as.factor(df$loser_hand)
+df$round                <- as.factor(df$round)
+```
+
+
+
+
+
+
+### Removing Irrelevant Columns
+
+```{r}
+
+df <- df %>% dplyr::select(start.x, 
+                           start.y, 
+                           start.z, 
+                           start.1:angle.change, 
+                           center.x:point,
+                           serve_classification, 
+                           winner_age,
+                           loser_hand,
+                           loser_age,
+                           round)
+
+# Winner hand had issues with factoring, but loser hand is fine
+
+```
+
+
+
+
+
+
+### Training and Test
+
+```{r}
+
+idx <- sample(nrow(df), nrow(df) * (2/3)) 
+
+tr  <- df[idx,]
+ts  <- df[-idx,]
+
+
+
+tr  <- as_tibble(tr)
+
+
+ts2 <- atp_serves[-idx,]
+
+```
+
+
+
+
+
+### Random Forest
+
+```{r}
+
+tr_rf   <- randomForest(tr[,-c(20)],
+                        tr$serve_classification,
+                        ntree=1000, 
+                        importance = TRUE)
+
+pred_rf <- predict(tr_rf, ts[,-c(20)], type="class") #Prediction using test data
+
+df_rf <- data.frame(Actual = ts$serve_classification, 
+                    Predicted = pred_rf,
+                    stringsAsFactors = FALSE)
+
+table(Actual = ts$serve_classification, Predicted = pred_rf)
+
+
+
+rf_imp <- data.frame(Var=rownames(tr_rf$importance), tr_rf$importance) %>%
+                   arrange(desc(MeanDecreaseAccuracy))
+
+varImpPlot(tr_rf, sort = TRUE)
+
+```
+
+
+
+
+
+
+### SVM 
+
+```{r}
+
+tr_svm   <- svm(serve_classification ~ ., 
+                data = tr, 
+                kernel = "radial")
+
+
+pred_svm <- predict(tr_svm, ts)          #Prediction using test data
+df_svm   <- data.frame(Actual = ts$serve_classification, 
+                       Predicted = pred_svm,
+                       stringsAsFactors = FALSE) 
+
+
+table(ts$serve_classification, pred_svm)
+
+```
+
+
+
+
+
+
+
+
+### Decision Tree 
+
+```{r}
+
+tr_decisiontree <- rpart(serve_classification ~ ., 
+                         data=tr,
+                         method="class")         
+
+prp(tr_decisiontree)     
+
+
+
+pred_decisiontree <- predict(tr_decisiontree,              
+                             ts, 
+                             type="class")
+
+
+df_decisiontree   <- data.frame(Actual    = ts$serve_classification, 
+                                Predicted = pred_decisiontree,
+                                stringsAsFactors = FALSE) 
+
+
+table(Actual = ts$serve_classification, Predicted = pred_decisiontree)
+
+
+```
+
+
+
+
+
+
+
+
+### LDA
+
+```{r}
+lda_model <- lda(serve_classification ~ .,                    
+                 data = tr,    
+                 prior = c(0.2, 0.8),         
+                 kernel="radial")
+
+pred_lda <- predict(lda_model, ts, type="class")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+### Penalized LDA
+
+```{r}
+
+cls <- ifelse(tr[,"serve_classification"] == "Ace", 2, 1)
+set.seed(1)
+tr_plda <- PenalizedLDA(as.matrix(tr[,-c(20)]), cls, 
+                        as.matrix(ts[,-c(20)]), lambda=0.001, K=1)
+
+
+
+table(ts$class, tr_plda$ypred)
+```
+
+
+
+
+
+
+
+
+
+### All Predictions Combined
+
+```{r}
+comparison <- data.frame(Actual = ts$serve_classification,
+                         'Random Forest' = df_rf$Predicted,
+                         SVM = df_svm$Predicted,
+                         'Decision Tree' = df_decisiontree$Predicted)
+
+                         
+```
+
