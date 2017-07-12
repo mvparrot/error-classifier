@@ -43,26 +43,10 @@ library(xgboost)
 library(foreign)
 library(stringr)
 library(stringi)
+library(devtools)
 
 
 
-
-```
-
-
-
-
-### Initial Exploration of Data
-
-```{r}
-atp_serves %>% 
-  group_by(side, serve_classification) %>% 
-  summarise(n = n())
-
-atp_serves %>% 
-  group_by(server, side, serve_classification) %>% 
-  summarise(n = n()) %>% 
-  mutate(proportion = (n * 100)/sum(n))
 ```
 
 
@@ -85,6 +69,19 @@ df$loser_name  <- toupper(df$loser_name)
 
 
 
+
+
+
+
+df$server_hand   <- NA
+df$receiver_hand <- NA
+df$server_age    <- NA
+df$receiver_age  <- NA
+df$diff_age      <- NA
+
+
+
+
 for (i in 1:nrow(df)) {
   
   if (df$serve_classification[i] == 0) {
@@ -96,6 +93,11 @@ for (i in 1:nrow(df)) {
     df$serve_classification[i] <- "Other"
     
   }
+  
+  
+  
+  
+  
   
   
   
@@ -113,16 +115,73 @@ for (i in 1:nrow(df)) {
   
   
   
+  
+  
+  
+  
+  
+  if (str_sub(df$winner_name[i], 
+              nchar(df$winner_name[i]) - nchar(df$server[i]) + 1, 
+              nchar(df$winner_name[i])) == df$server[i]) {
+    
+    df$server_hand[i]   <- df$winner_hand[i]
+    df$receiver_hand[i] <- df$loser_hand[i]
+    df$server_age[i]    <- df$winner_age[i]
+    df$receiver_age[i]  <- df$loser_age[i]
+    df$diff_age[i]      <- df$server_age[i] - df$receiver_age[i]
+    
+  } else {
+    
+    df$server_hand[i]   <- df$loser_hand[i]
+    df$receiver_hand[i] <- df$winner_hand[i]
+    df$server_age[i]    <- df$loser_age[i]
+    df$receiver_age[i]  <- df$winner_age[i]
+    df$diff_age[i]      <- df$server_age[i] - df$receiver_age[i]
+
+    
+  }
+  
+  
+  
+  
+  
+  
+  
+  
 }
+
+
 
 
 
 
 df$serve_classification <- as.factor(df$serve_classification)
 df$direction.change     <- as.factor(df$direction.change)
+df$round                <- as.factor(df$round)
 df$winner_hand          <- as.factor(df$winner_hand)
 df$loser_hand           <- as.factor(df$loser_hand)
-df$round                <- as.factor(df$round)
+df$server_hand          <- as.factor(df$server_hand)
+df$receiver_hand        <- as.factor(df$receiver_hand)
+
+
+
+
+df$right_to_right_deuce <- ifelse(df$side == "Deuce" & df$server_hand == "R" & df$receiver_hand == "R", 1, 0)
+df$right_to_right_ad    <- ifelse(df$side == "Ad" & df$server_hand == "R" & df$receiver_hand == "R", 1, 0)
+
+df$right_to_left_deuce  <- ifelse(df$side == "Deuce" & df$server_hand == "R" & df$receiver_hand == "L", 1, 0)
+df$right_to_left_ad     <- ifelse(df$side == "Ad" & df$server_hand == "R" & df$receiver_hand == "L", 1, 0)
+
+df$left_to_right_deuce  <- ifelse(df$side == "Deuce" & df$server_hand == "L" & df$receiver_hand == "R", 1, 0)
+df$left_to_right_ad     <- ifelse(df$side == "Ad" & df$server_hand == "L" & df$receiver_hand == "R", 1, 0)
+
+df$left_to_left_deuce   <- ifelse(df$side == "Deuce" & df$server_hand == "L" & df$receiver_hand == "L", 1, 0)
+df$left_to_left_ad      <- ifelse(df$side == "Ad" & df$server_hand == "L" & df$receiver_hand == "L", 1, 0)
+
+
+df                      <- df %>% group_by(side, server) %>% mutate(avg_start.y = mean(start.y)) %>% ungroup()
+df$diff_start.y         <- df$start.y - df$avg_start.y
+
 
 ```
 
@@ -141,25 +200,183 @@ df$round                <- as.factor(df$round)
 
 ### Removing Irrelevant Columns
 
-```{r}
+```{r select_variables}
 
 df <- df %>% dplyr::select(start.x, 
                            start.y, 
                            start.z, 
-                           start.1:angle.change, 
-                           center.x:side,
+                           start.1:serve.x, 
+                           game:side,
                            serve_classification, 
                            winner_age,
-                           loser_hand,
                            loser_age,
-                           round)
-
-
-# df$server_hand <-  
-
-# Winner hand had issues with factoring, but loser hand is fine
+                           round,
+                           server_age,
+                           receiver_age,
+                           diff_age,
+                           right_to_right_deuce,
+                           right_to_right_ad,
+                           right_to_left_deuce,
+                           right_to_left_ad,
+                           diff_start.y,
+                           server_hand,
+                           receiver_hand)
 
 ```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+### Initial Exploration of Data
+
+```{r aces_by_side}
+
+aces_by_side <- atp_serves %>% 
+                group_by(side, serve_classification) %>% 
+                summarise(n = n()) %>%
+                mutate(prop = (100*n) / sum(n))
+
+
+
+
+ggplot(data = aces_by_side) + 
+  geom_bar(stat = "identity", aes(x = serve_classification, y = prop, fill = serve_classification)) + 
+  facet_wrap(~side, scale = "free_y")
+
+
+
+```
+
+
+
+
+```{r aces_by_set}
+aces_by_set  <- atp_serves %>%
+                group_by(set, serve_classification) %>%
+                summarise(n = n()) %>%
+                mutate(prop = (100*n) / sum(n))
+```
+
+
+
+
+
+```{r aces_per_side_and_player}
+aces_per_side_and_player <- atp_serves %>% 
+                            group_by(server, side, serve_classification) %>% 
+                            summarise(n = n()) %>% 
+                            mutate(proportion = (n * 100)/sum(n))
+
+
+
+
+
+ggplot(data = rbind(aces_per_side_and_player %>% 
+                      filter(serve_classification == "Ace" & side == "Deuce") %>% 
+                      arrange(desc(proportion)) %>%
+                      head(10),
+  
+                      aces_per_side_and_player %>% 
+                      filter(serve_classification == "Ace" & side == "Ad") %>% 
+                      arrange(desc(proportion)) %>%
+                      head(10)),
+         
+         aes(x = reorder(as.character(server), proportion), y = proportion, fill = server)) + 
+    
+  geom_col() + 
+  geom_text(aes(label = paste(round(proportion, 1), "%", sep ="")), hjust = 1.2, colour = "white") +
+  coord_flip() + 
+  scale_colour_gradientn(colours = rainbow(4)) +
+  xlab("Player") + 
+  ylab("Proportion of Aces") + 
+  ggtitle("Proportion of Aces Per Side of Court") + 
+  theme(legend.position = "none", plot.title = element_text(hjust = 0.5)) +
+  facet_wrap(~side, scale = "free")
+
+
+
+
+
+
+ggplot(data = aces_per_side_and_player %>% 
+                      filter(serve_classification == "Ace"),
+  
+         
+         aes(x = side, y = proportion, fill = side)) + 
+    
+  geom_bar(stat = "identity") + 
+  scale_colour_gradientn(colours = rainbow(4)) +
+  xlab("Player") + 
+  ylab("Proportion of Aces") + 
+  ggtitle("Proportion of Aces Per Side of Court") + 
+  theme(legend.position = "none", plot.title = element_text(hjust = 0.5)) +
+  facet_wrap(~server, scale = "free") 
+
+
+
+```
+
+
+
+
+```{r aces_per_side_and_hand}
+aces_per_side_and_hand <- df %>% 
+                            group_by(server_hand, receiver_hand, side, serve_classification) %>% 
+                            summarise(n = n()) %>% 
+                            mutate(prop = (100*n)/sum(n))
+
+```
+
+
+
+
+```{r individual_players}
+individual_players     <- atp_serves %>% 
+                            group_by(server, serve_classification) %>% 
+                            summarise(n = n()) %>% 
+                            mutate(prop = (100*n) / sum(n))
+
+
+
+
+ggplot(data = individual_players) + 
+  geom_bar(stat = "identity", aes(x = serve_classification, y = prop, fill = serve_classification)) + 
+  facet_wrap(~server, scale = "free_y")
+
+
+
+
+ggplot(data = (individual_players %>% 
+                 filter(serve_classification == "Ace") %>% 
+                 arrange(desc(prop)) %>% 
+                 head(15)), 
+        aes(x = reorder(server, prop), y = prop, colour = prop)) + 
+        geom_bar(stat = "identity") + 
+        coord_flip() + 
+        xlab("Player") + 
+        ylab("Ace Proportion") +
+        geom_text(aes(label = paste(round(prop, 1), "%", sep ="")), hjust = 1.2, colour = "white") +
+        ggtitle("Top 15 Ace Proportions") + 
+        scale_colour_gradientn(colours = rainbow(4)) +
+        theme(legend.position = "none", plot.title = element_text(hjust = 0.5))
+```
+
+
+
+
+
 
 
 
@@ -170,6 +387,7 @@ df <- df %>% dplyr::select(start.x,
 
 ```{r}
 
+set.seed(1000)
 idx <- sample(nrow(df), nrow(df) * (2/3)) 
 
 tr  <- df[idx,]
@@ -177,10 +395,11 @@ ts  <- df[-idx,]
 
 
 
-tr  <- as_tibble(tr)
-
-
 ts2 <- atp_serves[-idx,]
+
+
+tr  <- tr %>% dplyr::select(-server_hand, -receiver_hand, -duration.arc3)
+ts  <- ts %>% dplyr::select(-server_hand, -receiver_hand, -duration.arc3)
 
 ```
 
@@ -192,12 +411,16 @@ ts2 <- atp_serves[-idx,]
 
 ```{r}
 
-tr_rf   <- randomForest(tr[,-c(21)],
-                        tr$serve_classification,
-                        ntree=1000, 
-                        importance = TRUE)
+tr_rf   <- tr %>% 
+            dplyr::select(-serve_classification) %>% 
+            randomForest(tr$serve_classification,
+                          ntree=2000, 
+                          importance = TRUE)
 
-pred_rf <- predict(tr_rf, ts[,-c(21)], type="class") #Prediction using test data
+
+pred_rf <- predict(tr_rf, 
+                   ts %>% dplyr::select(-serve_classification), 
+                   type="class") #Prediction using test data
 
 df_rf <- data.frame(Actual = ts$serve_classification, 
                     Predicted = pred_rf,
@@ -223,23 +446,116 @@ varImpPlot(tr_rf, sort = TRUE)
 
 
 
-### SVM 
+## SVM
+
+### SVM Radial
 
 ```{r}
 
-tr_svm   <- svm(serve_classification ~ ., 
-                data = tr, 
-                kernel = "radial")
+tr_svm_radial   <- svm(serve_classification ~ ., 
+                      data = tr, 
+                      kernel = "radial")
 
 
-pred_svm <- predict(tr_svm, ts)          
-df_svm   <- data.frame(Actual = ts$serve_classification, 
-                       Predicted = pred_svm) 
+pred_svm_radial <- predict(tr_svm_radial, ts)          
+df_svm_radial   <- data.frame(Actual = ts$serve_classification, 
+                              Predicted = pred_svm_radial) 
 
 
-table(ts$serve_classification, pred_svm)
+table(ts$serve_classification, pred_svm_radial)
 
 ```
+
+
+
+
+
+
+
+
+
+
+
+### SVM Linear
+
+```{r}
+
+tr_svm_linear   <- svm(serve_classification ~ ., 
+                      data = tr, 
+                      kernel = "linear")
+
+
+pred_svm_linear <- predict(tr_svm_linear, ts)          
+df_svm_linear   <- data.frame(Actual = ts$serve_classification, 
+                              Predicted = pred_svm_linear) 
+
+
+table(ts$serve_classification, pred_svm_linear)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+### SVM Polynomial
+
+```{r}
+
+tr_svm_polynomial   <- svm(serve_classification ~ ., 
+                      data = tr, 
+                      kernel = "polynomial")
+
+
+pred_svm_polynomial <- predict(tr_svm_polynomial, ts)          
+df_svm_polynomial   <- data.frame(Actual = ts$serve_classification, 
+                                  Predicted = pred_svm_polynomial) 
+
+
+table(ts$serve_classification, pred_svm_polynomial)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+### SVM Sigmoid
+
+```{r}
+
+tr_svm_sigmoid   <- svm(serve_classification ~ ., 
+                        data = tr, 
+                        kernel = "sigmoid")
+
+
+pred_svm_sigmoid <- predict(tr_svm_sigmoid, ts)          
+df_svm_sigmoid   <- data.frame(Actual = ts$serve_classification, 
+                               Predicted = pred_svm_sigmoid) 
+
+
+table(ts$serve_classification, pred_svm_sigmoid)
+
+```
+
+
+
+
+
+
 
 
 
@@ -286,14 +602,16 @@ table(Actual    = ts$serve_classification,
 ### LDA
 
 ```{r}
-lda_sub_df <- 
-
-lda_model <- lda(serve_classification ~ .,                    
-                 data = tr,    
-                 prior = c(0.2, 0.8),         
-                 kernel="radial")
-
-pred_lda <- predict(lda_model, ts, type="class")
+# lda_sub_df <- tr %>% select()
+#
+# num_of_aces <- tr %>% group_by(serve_classification) %>% summarise(n = n()) %>% mutate(prop = n/sum(n))
+#
+# lda_model <- lda(serve_classification ~ .,                    
+#                  data = tr,    
+#                  prior = c(num_of_aces$prop[1], num_of_aces$prop[2]),         
+#                  kernel="radial")
+# 
+# pred_lda <- predict(lda_model, ts, type="class")
 ```
 
 
@@ -311,7 +629,7 @@ pred_lda <- predict(lda_model, ts, type="class")
 
 ```{r}
 
-# cls <- ifelse(tr[,"serve_classification"] == "Ace", 2, 1)
+cls <- ifelse(tr[,"serve_classification"] == "Ace", 2, 1)
 # set.seed(1)
 # tr_plda <- PenalizedLDA(as.matrix(tr[,-c(21)]), cls, 
 #                         as.matrix(ts[,-c(21)]), lambda=0.001, K=1)
@@ -331,11 +649,31 @@ pred_lda <- predict(lda_model, ts, type="class")
 
 ```{r}
 
-# dtrain <- xgb.DMatrix(as.matrix(tr[,-c(21)]), label = cls)
-# param <- list(max.depth = 2, eta = 1, silent = 1)
-# tr_xgb <- xgb.train(param, dtrain, nthread = 2, nround = 10)
-# pxgb <- round(predict(tr_xgb, as.matrix(ts[,-c(21)])), 0)
-# table(ts$class, pxgb)
+dtrain <- tr %>% 
+          dplyr::select(-serve_classification, -round, -side, -direction.change) %>% 
+          as.matrix %>% 
+          xgb.DMatrix(label=cls)
+
+param <- list(max.depth = 2, eta = 1, silent = 1)
+tr_xgb <- xgb.train(param, dtrain, nthread = 2, nround = 10)
+
+
+ts_matrix <- ts %>% 
+              dplyr::select(-serve_classification, -round, -side, -direction.change) %>% 
+              as.matrix
+
+pxgb <- round(predict(tr_xgb, ts_matrix), 0)
+
+pxgb <- ifelse(pxgb == 2, "Ace", "Other")
+pxgb <- as.factor(pxgb)
+
+table(ts$serve_classification, pxgb)
+
+df_xgboost   <- data.frame(Actual    = ts$serve_classification, 
+                           Predicted = pxgb,
+                           stringsAsFactors = FALSE) 
+
+
 
 ```
 
@@ -350,8 +688,19 @@ pred_lda <- predict(lda_model, ts, type="class")
 ### Logit
 
 ```{r}
-# tr_logit   <- glm(serve_classification ~ ., family = binomial(link="logit"), data = tr) 
-# pred_logit <- predict(tr_logit, ts$serve_classification)
+tr_logit   <- glm(serve_classification ~ ., family = binomial(link="logit"), data = tr)
+tr_logit %>% summary
+
+pred_logit <- predict(tr_logit, ts, type="response")
+pred_logit <- ifelse(pred_logit >= 0.5, "Other", "Ace")
+
+df_logit   <- data.frame(Actual    = ts$serve_classification, 
+                         Predicted = pred_logit,
+                         stringsAsFactors = FALSE) 
+
+
+table(Actual    = ts$serve_classification, 
+      Predicted = pred_logit)
 
 
 ```
@@ -370,10 +719,15 @@ pred_lda <- predict(lda_model, ts, type="class")
 ### All Predictions Combined
 
 ```{r}
-comparison <- data.frame(Actual = ts$serve_classification,
-                         'Random Forest' = df_rf$Predicted,
-                         SVM = df_svm$Predicted,
-                         'Decision Tree' = df_decisiontree$Predicted)
+comparison <- data.frame(Actual           = ts$serve_classification,
+                         'Random Forest'  = df_rf$Predicted,
+                         'SVM Radial'     = df_svm_radial$Predicted,
+                         'SVM Linear'     = df_svm_linear$Predicted,
+                         'SVM Polynomial' = df_svm_polynomial$Predicted,
+                         'SVM Sigmoid'    = df_svm_sigmoid$Predicted,
+                         'Decision Tree'  = df_decisiontree$Predicted,
+                         XGBoost          = df_xgboost$Predicted,
+                         Logit            = df_logit$Predicted)
 
                          
 ```
@@ -398,7 +752,7 @@ comparison <- data.frame(Actual = ts$serve_classification,
 
 ```{r}
 
-df_sub <- gather(data = df, 
+df_long <- gather(data = df, 
                  key = variables, 
                  value = stat, 
                  start.x, 
@@ -411,7 +765,7 @@ df_sub <- gather(data = df,
                  -direction.change)
        
                 
-ggplot(df_sub) + 
+ggplot(df_long) + 
   geom_boxplot(aes(x = serve_classification, y = stat)) + 
   facet_wrap(~variables, scale = "free_y")
 
@@ -419,4 +773,20 @@ ggplot(df_sub) +
 ```
 
 
+
+
+
+
+
+
+
+
+## Federer Match Data
+
+```{r}
+setwd("~/2017 Work/intentions/intentions/data")
+load("~/2017 Work/intentions/intentions/data/federer2017.RData")
+
+
+```
 
