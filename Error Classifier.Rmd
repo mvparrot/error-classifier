@@ -6,11 +6,14 @@ output: word_document
 ---
 
 ```{r include=FALSE}
-knitr::opts_chunk$set(echo = FALSE,
-                      warning=FALSE, 
-                      message=FALSE, 
-                      error=FALSE,
-                      cache=FALSE)
+knitr::opts_chunk$set(echo    = FALSE,
+                      warning = FALSE, 
+                      message = FALSE, 
+                      error   = FALSE,
+                      cache   = FALSE)
+
+options(scipen = 999)
+
 ```
 
 
@@ -25,13 +28,8 @@ df <- atp_serves
 library(ggplot2)
 library(dplyr)
 library(tidyr)
-library(purrr)
-library(fpc) 
-library(hextri)
 library(gridExtra)
 library(GGally)
-library(ggdendro)
-library(plotly)
 library(e1071)
 library(MASS)
 library(randomForest)
@@ -44,6 +42,8 @@ library(foreign)
 library(stringr)
 library(stringi)
 library(devtools)
+library(fpp2)
+library(neuralnet)
 
 
 
@@ -62,6 +62,16 @@ library(devtools)
 
 ```{r}
 
+
+### Removing observation with measurement error ###
+df         <- df %>% filter(start.x > 10)
+atp_serves <- df %>% filter(start.x > 10)
+
+
+
+
+
+### Adding Variables and Re-Classifying "serve_classification" Column ###
 df$server      <- as.character(df$server)
 df$receiver    <- as.character(df$receiver)
 df$winner_name <- toupper(df$winner_name)
@@ -267,6 +277,10 @@ aces_by_set  <- atp_serves %>%
                 group_by(set, serve_classification) %>%
                 summarise(n = n()) %>%
                 mutate(prop = (100*n) / sum(n))
+
+
+
+
 ```
 
 
@@ -293,9 +307,9 @@ ggplot(data = rbind(aces_per_side_and_player %>%
                       arrange(desc(proportion)) %>%
                       head(10)),
          
-         aes(x = reorder(as.character(server), proportion), y = proportion, fill = server)) + 
+         aes(x = reorder(server, proportion), y = proportion, fill = server)) + 
     
-  geom_col() + 
+  geom_bar(stat = "identity") + 
   geom_text(aes(label = paste(round(proportion, 1), "%", sep ="")), hjust = 1.2, colour = "white") +
   coord_flip() + 
   scale_colour_gradientn(colours = rainbow(4)) +
@@ -309,6 +323,15 @@ ggplot(data = rbind(aces_per_side_and_player %>%
 
 
 
+
+```
+
+
+
+
+
+
+```{r}
 
 ggplot(data = aces_per_side_and_player %>% 
                       filter(serve_classification == "Ace"),
@@ -325,9 +348,7 @@ ggplot(data = aces_per_side_and_player %>%
   facet_wrap(~server, scale = "free") 
 
 
-
 ```
-
 
 
 
@@ -385,7 +406,7 @@ ggplot(data = (individual_players %>%
 
 ### Training and Test
 
-```{r}
+```{r training_and_test}
 
 set.seed(1000)
 idx <- sample(nrow(df), nrow(df) * (2/3)) 
@@ -407,9 +428,12 @@ ts  <- ts %>% dplyr::select(-server_hand, -receiver_hand, -duration.arc3)
 
 
 
-### Random Forest
 
-```{r}
+
+
+### Random Forest and Variable Selection Based Off Accuracy Measures
+
+```{r random_forest}
 
 tr_rf   <- tr %>% 
             dplyr::select(-serve_classification) %>% 
@@ -430,10 +454,32 @@ table(Actual = ts$serve_classification, Predicted = pred_rf)
 
 
 
-rf_imp <- data.frame(Var = rownames(tr_rf$importance), tr_rf$importance) %>%
+rf_imp <- data.frame(Var = rownames(tr_rf$importance), tr_rf$importance, stringsAsFactors = FALSE) %>%
                      arrange(desc(MeanDecreaseAccuracy))
 
 varImpPlot(tr_rf, sort = TRUE)
+
+
+
+
+
+
+
+
+### Filtering the Columns Based Off Importance ###
+
+rf_imp$dummy <- ifelse(rf_imp$MeanDecreaseGini > 2.8 | rf_imp$MeanDecreaseAccuracy > 0.001, 1, 0)
+rf_imp       <- rf_imp[which(rf_imp$dummy == 1),]
+rf_var_list  <- rf_imp$Var
+rf_var_list[length(rf_var_list) + 1] <- "serve_classification"
+
+
+
+
+tr <- tr[, which(colnames(tr) %in% rf_var_list)]
+ts <- ts[, which(colnames(ts) %in% rf_var_list)]
+
+
 
 ```
 
@@ -446,11 +492,50 @@ varImpPlot(tr_rf, sort = TRUE)
 
 
 
+### Random Forest With Most Important Variables
+
+```{r random_forest2}
+
+tr_rf   <- tr %>% 
+            dplyr::select(-serve_classification) %>% 
+            randomForest(tr$serve_classification,
+                         ntree=2000, 
+                         importance = TRUE)
+
+
+pred_rf <- predict(tr_rf, 
+                   ts %>% dplyr::select(-serve_classification), 
+                   type="class") #Prediction using test data
+
+
+df_rf <- data.frame(Actual = ts$serve_classification, 
+                    Predicted = pred_rf,
+                    stringsAsFactors = FALSE)
+
+
+(rf_table <- table(Actual = ts$serve_classification, Predicted = pred_rf))
+
+
+
+rf_imp <- data.frame(Var = rownames(tr_rf$importance), tr_rf$importance, stringsAsFactors = FALSE) %>%
+          arrange(desc(MeanDecreaseAccuracy))
+
+
+varImpPlot(tr_rf, sort = TRUE)
+
+```
+
+
+
+
+
+
+
 ## SVM
 
 ### SVM Radial
 
-```{r}
+```{r svm_radial}
 
 tr_svm_radial   <- svm(serve_classification ~ ., 
                       data = tr, 
@@ -462,7 +547,7 @@ df_svm_radial   <- data.frame(Actual = ts$serve_classification,
                               Predicted = pred_svm_radial) 
 
 
-table(ts$serve_classification, pred_svm_radial)
+(svm_radial_table <- table(ts$serve_classification, pred_svm_radial))
 
 ```
 
@@ -478,7 +563,7 @@ table(ts$serve_classification, pred_svm_radial)
 
 ### SVM Linear
 
-```{r}
+```{r svm_linear}
 
 tr_svm_linear   <- svm(serve_classification ~ ., 
                       data = tr, 
@@ -490,7 +575,7 @@ df_svm_linear   <- data.frame(Actual = ts$serve_classification,
                               Predicted = pred_svm_linear) 
 
 
-table(ts$serve_classification, pred_svm_linear)
+(svm_linear_table <- table(ts$serve_classification, pred_svm_linear))
 
 ```
 
@@ -507,7 +592,7 @@ table(ts$serve_classification, pred_svm_linear)
 
 ### SVM Polynomial
 
-```{r}
+```{r svm_polynomial}
 
 tr_svm_polynomial   <- svm(serve_classification ~ ., 
                       data = tr, 
@@ -519,7 +604,7 @@ df_svm_polynomial   <- data.frame(Actual = ts$serve_classification,
                                   Predicted = pred_svm_polynomial) 
 
 
-table(ts$serve_classification, pred_svm_polynomial)
+(svm_polynomial_table <- table(ts$serve_classification, pred_svm_polynomial))
 
 ```
 
@@ -528,28 +613,6 @@ table(ts$serve_classification, pred_svm_polynomial)
 
 
 
-
-
-
-
-
-### SVM Sigmoid
-
-```{r}
-
-tr_svm_sigmoid   <- svm(serve_classification ~ ., 
-                        data = tr, 
-                        kernel = "sigmoid")
-
-
-pred_svm_sigmoid <- predict(tr_svm_sigmoid, ts)          
-df_svm_sigmoid   <- data.frame(Actual = ts$serve_classification, 
-                               Predicted = pred_svm_sigmoid) 
-
-
-table(ts$serve_classification, pred_svm_sigmoid)
-
-```
 
 
 
@@ -566,7 +629,7 @@ table(ts$serve_classification, pred_svm_sigmoid)
 
 ### Decision Tree 
 
-```{r}
+```{r decision_tree}
 
 tr_decisiontree <- rpart(serve_classification ~ ., 
                          data=tr,
@@ -586,8 +649,8 @@ df_decisiontree   <- data.frame(Actual    = ts$serve_classification,
                                 stringsAsFactors = FALSE) 
 
 
-table(Actual    = ts$serve_classification, 
-      Predicted = pred_decisiontree)
+(decision_tree_table <- table(Actual    = ts$serve_classification, 
+                              Predicted = pred_decisiontree))
 
 
 ```
@@ -601,7 +664,7 @@ table(Actual    = ts$serve_classification,
 
 ### LDA
 
-```{r}
+```{r LDA}
 # lda_sub_df <- tr %>% select()
 #
 # num_of_aces <- tr %>% group_by(serve_classification) %>% summarise(n = n()) %>% mutate(prop = n/sum(n))
@@ -627,7 +690,7 @@ table(Actual    = ts$serve_classification,
 
 ### Penalized LDA
 
-```{r}
+```{r penalizedLDA}
 
 cls <- ifelse(tr[,"serve_classification"] == "Ace", 2, 1)
 # set.seed(1)
@@ -647,10 +710,13 @@ cls <- ifelse(tr[,"serve_classification"] == "Ace", 2, 1)
 
 ### XGBoost
 
-```{r}
+```{r xgboost}
+
+
+cls <- ifelse(tr[,"serve_classification"] == "Ace", 2, 1)
 
 dtrain <- tr %>% 
-          dplyr::select(-serve_classification, -round, -side, -direction.change) %>% 
+          dplyr::select(-serve_classification) %>% 
           as.matrix %>% 
           xgb.DMatrix(label=cls)
 
@@ -659,7 +725,7 @@ tr_xgb <- xgb.train(param, dtrain, nthread = 2, nround = 10)
 
 
 ts_matrix <- ts %>% 
-              dplyr::select(-serve_classification, -round, -side, -direction.change) %>% 
+              dplyr::select(-serve_classification) %>% 
               as.matrix
 
 pxgb <- round(predict(tr_xgb, ts_matrix), 0)
@@ -667,7 +733,10 @@ pxgb <- round(predict(tr_xgb, ts_matrix), 0)
 pxgb <- ifelse(pxgb == 2, "Ace", "Other")
 pxgb <- as.factor(pxgb)
 
-table(ts$serve_classification, pxgb)
+
+
+
+(xgboost_table <- table(ts$serve_classification, pxgb))
 
 df_xgboost   <- data.frame(Actual    = ts$serve_classification, 
                            Predicted = pxgb,
@@ -687,9 +756,13 @@ df_xgboost   <- data.frame(Actual    = ts$serve_classification,
 
 ### Logit
 
-```{r}
+```{r logit}
 tr_logit   <- glm(serve_classification ~ ., family = binomial(link="logit"), data = tr)
 tr_logit %>% summary
+
+tr_logit   <- suppressWarnings(step(tr_logit))
+
+
 
 pred_logit <- predict(tr_logit, ts, type="response")
 pred_logit <- ifelse(pred_logit >= 0.5, "Other", "Ace")
@@ -699,11 +772,82 @@ df_logit   <- data.frame(Actual    = ts$serve_classification,
                          stringsAsFactors = FALSE) 
 
 
-table(Actual    = ts$serve_classification, 
-      Predicted = pred_logit)
+(logit_table <- table(Actual    = ts$serve_classification, 
+                      Predicted = pred_logit))
+
 
 
 ```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+### Probit
+
+```{r probit}
+tr_probit   <- glm(serve_classification ~ ., family = binomial(link="probit"), data = tr)
+tr_probit %>% summary
+
+tr_probit   <- suppressWarnings(step(tr_probit))
+
+
+
+pred_probit <- predict(tr_probit, ts, type="response")
+pred_probit <- ifelse(pred_probit >= 0.5, "Other", "Ace")
+
+df_probit   <- data.frame(Actual    = ts$serve_classification, 
+                          Predicted = pred_probit,
+                          stringsAsFactors = FALSE) 
+
+
+(probit_table  <- table(Actual    = ts$serve_classification, 
+                        Predicted = pred_probit))
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+### Neural Networks
+
+```{r neural_networks}
+
+# neuralnet_df       <- tr
+# neuralnet_df$dummy <- ifelse(neuralnet_df$serve_classification == "Ace", 1, 0)
+# neuralnet_df       <- neuralnet_df %>% dplyr::select(-serve_classification)
+# 
+# equation <- as.formula(paste('dummy ~ ' , paste(colnames(neuralnet_df)[1:(length(colnames(neuralnet_df))-1)], collapse='+')))
+# 
+# 
+# tr_neuralnet <- neuralnet(equation, data = neuralnet_df, hidden = 1)
+
+
+```
+
+
+
+
+
+
+
 
 
 
@@ -718,21 +862,115 @@ table(Actual    = ts$serve_classification,
 
 ### All Predictions Combined
 
-```{r}
-comparison <- data.frame(Actual           = ts$serve_classification,
-                         'Random Forest'  = df_rf$Predicted,
-                         'SVM Radial'     = df_svm_radial$Predicted,
-                         'SVM Linear'     = df_svm_linear$Predicted,
-                         'SVM Polynomial' = df_svm_polynomial$Predicted,
-                         'SVM Sigmoid'    = df_svm_sigmoid$Predicted,
-                         'Decision Tree'  = df_decisiontree$Predicted,
-                         XGBoost          = df_xgboost$Predicted,
-                         Logit            = df_logit$Predicted)
+```{r comparison}
+comparison <- data.frame(Actual            = ts$serve_classification,
+                         'Random Forest'   = df_rf$Predicted,
+                         'SVM Radial'      = df_svm_radial$Predicted,
+                         'SVM Linear'      = df_svm_linear$Predicted,
+                         'SVM Polynomial'  = df_svm_polynomial$Predicted,
+                         'Decision Tree'   = df_decisiontree$Predicted,
+                         XGBoost           = df_xgboost$Predicted,
+                         Logit             = df_logit$Predicted,
+                         Probit            = df_probit$Predicted)
+
+
+
+error_count <- data.frame('Random Forest'  = c(sum(comparison$Random.Forest  != comparison$Actual), rf_table[1, 1]),
+                          'SVM Radial'     = c(sum(comparison$SVM.Radial     != comparison$Actual), svm_radial_table[1, 1]), 
+                          'SVM Linear'     = c(sum(comparison$SVM.Linear     != comparison$Actual), svm_linear_table[1, 1]),
+                          'SVM Polynomial' = c(sum(comparison$SVM.Polynomial != comparison$Actual), svm_polynomial_table[1, 1]),
+                          'Decision Tree'  = c(sum(comparison$Decision.Tree  != comparison$Actual), decision_tree_table[1, 1]),
+                          XGBoost          = c(sum(comparison$XGBoost        != comparison$Actual), xgboost_table[1, 1]),
+                          Logit            = c(sum(comparison$Logit          != comparison$Actual), logit_table[1, 1]),
+                          Probit           = c(sum(comparison$Probit         != comparison$Actual), probit_table[1, 1]))
+
+rownames(error_count) <- c("Total Misclassifications", "Correct Ace Prediction")
+
+
+
+error_count$Best <- c(ifelse(min(error_count[1,]) == error_count$Random.Forest[1],  "Random Forest",
+                      ifelse(min(error_count[1,]) == error_count$SVM.Radial[1],     "SVM Radial",
+                      ifelse(min(error_count[1,]) == error_count$SVM.Linear[1],     "SVM Linear",
+                      ifelse(min(error_count[1,]) == error_count$SVM.Polynomial[1], "SVM Polynomial",
+                      ifelse(min(error_count[1,]) == error_count$Decision.Tree[1],  "Decision Tree",
+                      ifelse(min(error_count[1,]) == error_count$XGBoost[1],        "XGBoost", "Logit")))))),
+                    
+                      ifelse(max(error_count[2,]) == error_count$Random.Forest[1],  "Random Forest",
+                      ifelse(max(error_count[2,]) == error_count$SVM.Radial[1],     "SVM Radial",
+                      ifelse(max(error_count[2,]) == error_count$SVM.Linear[1],     "SVM Linear",
+                      ifelse(max(error_count[2,]) == error_count$SVM.Polynomial[1], "SVM Polynomial",
+                      ifelse(max(error_count[2,]) == error_count$Decision.Tree[1],  "Decision Tree",
+                      ifelse(max(error_count[2,]) == error_count$XGBoost[1],        "XGBoost", "Logit")))))))
+
 
                          
 ```
 
+Ultimately, given the variables chosen, the best classification method in terms of misclassification rate is the `r error_count$Best[1]` model with `r min(error_count[1, 1:(ncol(error_count)-1)])` misclassifications. The best model in terms of the number of correctly predicted aces is the `r error_count$Best[2]` model with `r max(error_count[2, 1:(ncol(error_count)-1)])` correctly predicted aces.   
 
+
+
+
+
+
+
+
+
+
+
+
+
+### Hybrid Classification Using Majority Voting
+
+```{r}
+
+weights <- c(sum(error_count[1, 1:(ncol(error_count) - 1)]) / ((ncol(error_count)-1) * error_count[1, 1:(ncol(error_count) - 1)]))
+
+weights <- unlist(weights)
+
+
+
+
+hybrid_comparison <- comparison
+
+
+for (j in 1:ncol(hybrid_comparison)) {
+  
+  hybrid_comparison[, j] <- as.character(hybrid_comparison[, j])
+  hybrid_comparison[, j] <- ifelse(hybrid_comparison[, j] == "Other", 0, 1)
+ 
+  
+}
+
+
+
+
+hybrid_comparison$weighted_pred <- ifelse(hybrid_comparison$Random.Forest  * weights["Random.Forest"] + 
+                                          hybrid_comparison$SVM.Radial     * weights["SVM.Radial"] + 
+                                          hybrid_comparison$SVM.Linear     * weights["SVM.Linear"] + 
+                                          hybrid_comparison$SVM.Polynomial * weights["SVM.Polynomial"] + 
+                                          hybrid_comparison$Decision.Tree  * weights["Decision.Tree"] + 
+                                          hybrid_comparison$XGBoost        * weights["XGBoost"] + 
+                                          hybrid_comparison$Logit          * weights["Logit"] + 
+                                          hybrid_comparison$Probit         * weights["Probit"] > (ncol(comparison) - 1) / 2,
+                                           
+                                          "Ace", "Other")
+
+
+
+for (j in 1:(ncol(hybrid_comparison)-1)) {
+  
+  hybrid_comparison[, j] <- ifelse(hybrid_comparison[, j] == 0, "Other", "Ace")
+  hybrid_comparison[, j] <- as.character(hybrid_comparison[, j])
+  
+}
+
+
+table(Actual    = hybrid_comparison$Actual, 
+      Predicted = hybrid_comparison$weighted_pred)
+
+
+```
 
 
 
@@ -752,22 +990,44 @@ comparison <- data.frame(Actual           = ts$serve_classification,
 
 ```{r}
 
-df_long <- gather(data = df, 
-                 key = variables, 
-                 value = stat, 
-                 start.x, 
-                 start.y, 
-                 start.z, 
-                 start.1:angle.change, 
-                 center.x:point, 
-                 winner_age,
-                 loser_age,
-                 -direction.change)
+df_long1 <- gather(data = df, 
+                   key = variables, 
+                   value = stat, 
+                   start.y, 
+                   start.z, 
+                   start.1:angle.change, 
+                   center.x:point, 
+                   winner_age,
+                   loser_age,
+                   -direction.change)
        
                 
-ggplot(df_long) + 
-  geom_boxplot(aes(x = serve_classification, y = stat)) + 
+ggplot(df_long1) + 
+  geom_boxplot(aes(x = serve_classification, y = stat, fill = serve_classification)) + 
   facet_wrap(~variables, scale = "free_y")
+
+
+
+
+df_long2 <- gather(data = df, 
+                   key = variables,
+                   value = stat,
+                   speed:height_off_bounce,
+                   angle.change:duration.arc1, 
+                   set,
+                   diff_age,
+                   diff_start.y)
+
+
+ggplot(df_long2) + 
+  geom_boxplot(aes(x = serve_classification, y = stat, fill = serve_classification)) + 
+  facet_wrap(~variables, scale = "free_y")
+
+
+
+ggplot(data = df) + 
+  geom_density(aes(x = z0.1, group = serve_classification, colour = serve_classification))
+
 
 
 ```
