@@ -1,0 +1,1045 @@
+---
+title: "Winners and Errors Classification"
+author: "Dean"
+date: "24 July 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo    = TRUE,
+                      warning = FALSE, 
+                      message = FALSE, 
+                      error   = FALSE,
+                      cache   = FALSE)
+
+options(scipen = 999)
+
+```
+
+
+
+## Loading in Data Set
+
+```{r load_data}
+
+setwd("~/2017 Work/Federer/erroR/data")
+load("~/2017 Work/Federer/erroR/data/federer2017.RData")
+
+df <- federer2017
+
+
+
+library(ggplot2)
+library(tidyr)
+library(gridExtra)
+library(GGally)
+library(e1071)
+library(MASS)
+library(dplyr)
+library(randomForest)
+library(gbm)
+library(rpart)
+library(rpart.plot)
+library(penalizedLDA)
+library(xgboost)
+library(foreign)
+library(stringr)
+library(stringi)
+library(devtools)
+library(fpp2)
+library(neuralnet)
+library(caret)
+library(PPtreeViz)
+library(knitr)
+library(ggthemes)
+
+
+```
+
+
+## Data Manipulation
+
+```{r adding_variables1}
+
+### Removing NA Observations
+df <- df %>% 
+      filter(is.na(unforced) == FALSE) %>% 
+      filter(is.na(ballmark.x) == FALSE) %>% 
+      filter(is.na(net.clearance) == FALSE) %>%
+      filter(is.na(hitpoint) == FALSE)
+
+
+
+
+
+
+for (i in 1:nrow(df)) {
+  
+  if (df$serve.classification[i] == 0) {
+    
+    df$serve.classification[i] <- "Ace"
+    
+  } else if (df$serve.classification[i] == 1) {
+    
+    df$serve.classification[i] <- "ReturnInPlay"
+    
+  } else if (df$serve.classification[i] == 2) {
+    
+    df$serve.classification[i] <- "ReturnOutOfPlay"
+    
+  } else if (df$serve.classification[i] == 3) {
+    
+    df$serve.classification[i] <- "Fault"
+    
+  }
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  if (federer2017$serve.classification[i] == 0) {
+    
+    federer2017$serve.classification[i] <- "Ace"
+    
+  } else if (federer2017$serve.classification[i] == 1) {
+    
+    federer2017$serve.classification[i] <- "ReturnInPlay"
+    
+  } else if (federer2017$serve.classification[i] == 2) {
+    
+    federer2017$serve.classification[i] <- "ReturnOutOfPlay"
+    
+  } else if (federer2017$serve.classification[i] == 3) {
+    
+    federer2017$serve.classification[i] <- "Fault"
+    
+  }
+  
+
+  
+}
+
+
+
+
+
+
+
+df$end_of_point          <- c(rep(NA, nrow(df)-1), 1)
+
+
+
+for (i in 1:(nrow(df) - 1)) {
+  
+  if (df$id[i] != df$id[i+1]) {
+    
+    
+    df$end_of_point[i] <- 1
+    
+    
+  } else {
+    
+    
+    df$end_of_point[i] <- 0
+    
+    
+  }
+  
+  
+  
+}
+
+
+
+
+
+
+
+
+df$ballmark_x_ballmark_y <- df$ballmark.x * df$ballmark.y
+df$winner                <- as.factor(df$winner)
+df$serve.classification  <- as.factor(df$serve.classification)
+df$side                  <- as.factor(df$side)
+df$hitpoint              <- as.factor(df$hitpoint)
+
+
+df <- df %>% dplyr::select(-matchid, -serveid)
+
+
+```
+
+
+
+
+
+```{r adding_variables2}
+
+#Reorienting shots so that all Federer's shot are from negative x side of court, and all opponents shots are from positive x side. y coordinates have been flipped as required.
+
+
+#Federer
+df <- df %>% rowwise %>%
+  mutate(ballmark.x = ifelse(impact.player == "FEDERER" & start.x >= 0, -ballmark.x, ballmark.x)) %>%
+  mutate(ballmark.y = ifelse(impact.player == "FEDERER" & start.x >= 0, -ballmark.y, ballmark.y)) %>%
+  mutate(start.y    = ifelse(impact.player == "FEDERER" & start.x >= 0, -start.y, start.y)) %>%
+  mutate(final.x    = ifelse(impact.player == "FEDERER" & start.x >= 0, -final.x, ballmark.x)) %>%
+  mutate(final.y    = ifelse(impact.player == "FEDERER" & start.x >= 0, -final.y, ballmark.y)) %>%
+  mutate(start.x    = ifelse(impact.player == "FEDERER" & start.x >= 0, -start.x, start.x))
+
+
+#Opponents
+df <- df %>% rowwise %>%
+  mutate(start.y    = ifelse(impact.player != "FEDERER" & start.x <= 0, -start.y, start.y)) %>%
+  mutate(ballmark.x = ifelse(impact.player != "FEDERER" & start.x <= 0, -ballmark.x, ballmark.x)) %>%
+  mutate(ballmark.y = ifelse(impact.player != "FEDERER" & start.x <= 0, -ballmark.y, ballmark.y)) %>%
+  mutate(final.x    = ifelse(impact.player != "FEDERER" & start.x <= 0, -final.x, ballmark.x)) %>%
+  mutate(final.y    = ifelse(impact.player != "FEDERER" & start.x <= 0, -final.y, ballmark.y)) %>%
+  mutate(start.x    = ifelse(impact.player != "FEDERER" & start.x <= 0, -start.x, start.x))
+
+
+#Adding Vars
+
+df <- df %>%
+  mutate(isserver = ifelse(server == impact.player,1,0))
+  
+  
+df <- df %>%
+  mutate(retser  = ifelse(shot == 2, 1, 0)) %>%
+  mutate(retser1 = ifelse(shot == 2 & serve.classification == 1, 1, 0)) %>%
+  mutate(retser2 = ifelse(shot == 2 & serve.classification == 2, 1, 0))
+
+
+
+
+for (i in 1:ncol(df)) {
+  
+  if(is.character(df[,i]) == TRUE) {
+    
+    df[,i] <- as.factor(df[,i])
+    
+  }
+  
+}
+
+
+
+
+ids <- df$id
+split.ids <- t(data.frame(stri_split_boundaries(ids, type="character")))
+
+
+
+df <- df %>%
+      plyr::mutate(server.points   = as.numeric(split.ids[,1]), 
+                   receiver.points = as.numeric(split.ids[,2]), 
+                   server.games    = as.numeric(split.ids[,3]), 
+                   receiver.games  = as.numeric(split.ids[,4]), 
+                   server.sets     = as.numeric(split.ids[,5]), 
+                   receiver.sets   = as.numeric(split.ids[,6]))
+
+
+
+
+#Now mutate this to Federer score and opponent score
+df <- df %>% rowwise %>%
+  mutate(fed.points = ifelse(server == "FEDERER", as.numeric(server.points),   as.numeric(receiver.points))) %>%
+  mutate(fed.games  = ifelse(server == "FEDERER", as.numeric(server.games),    as.numeric(receiver.games))) %>%
+  mutate(fed.sets   = ifelse(server == "FEDERER", as.numeric(server.sets),     as.numeric(receiver.sets))) %>%
+  mutate(opp.points = ifelse(server == "FEDERER", as.numeric(receiver.points), as.numeric(server.points))) %>%
+  mutate(opp.games  = ifelse(server == "FEDERER", as.numeric(receiver.games),  as.numeric(server.games))) %>%
+  mutate(opp.sets   = ifelse(server == "FEDERER", as.numeric(receiver.sets),   as.numeric(server.sets)))
+
+
+
+df <- df %>%
+    mutate(sets.diff   = fed.sets - opp.sets) %>%
+    mutate(games.diff  = fed.games - opp.games) %>%
+    mutate(points.diff = fed.points - opp.points)
+
+
+
+df <- df %>%
+  mutate(speed.diff = NA) %>%
+  mutate(oppo.hit.x = NA) %>%
+  mutate(oppo.hit.y = NA) %>%
+  mutate(oppo.hit.z = NA) %>%
+  mutate(oppo.speed = NA) %>%
+  mutate(oppo.ballmark.x = NA) %>%
+  mutate(oppo.ballmark.y = NA) %>%
+  mutate(oppo_ballmark_x_ballmark_y = NA) %>%
+  mutate(speed.ratio = NA)
+
+
+
+
+
+for (i in 2:nrow(df)) {
+  
+  if(df$shot[i] != 1) {             #so that only non-serves are affected
+
+      df$speed.diff[i] = df$speed1[i] - df$speed1[i-1]
+      #speed difference
+      
+      df$oppo.hit.x[i]      <- df$start.x[i-1]
+      df$oppo.hit.y[i]      <- df$start.y[i-1]
+      df$oppo.hit.z[i]      <- df$start.z[i-1]
+      df$oppo.speed[i]      <- df$speed1[i-1]
+      df$oppo.ballmark.x[i] <- df$ballmark.x[i-1]
+      df$oppo.ballmark.y[i] <- df$ballmark.y[i-1]
+      
+      df$oppo_ballmark_x_ballmark_y[i] <- df$oppo.ballmark.x[i] * df$oppo.ballmark.y[i]
+      #oppo hit
+  
+  }
+  
+}
+
+
+
+
+
+df <- df %>%
+  mutate(speed.ratio = speed1/oppo.speed) %>% #speed ratio
+  mutate(side.dist   = 4.115 - abs(oppo.ballmark.y)) %>% #distance of oppo.ballmark from sideline
+  mutate(base.dist   = 11.89 - abs(oppo.ballmark.x)) %>% #distance of oppo.ballmark from baseline
+  mutate(short.dist  = min(side.dist, base.dist)) #shortest distance from any line
+
+
+
+
+#Adding angles
+df <- df %>%
+  mutate(p.start.x = NA) %>%
+  mutate(p.start.y = NA)
+
+for (i in 3:nrow(df)) {
+  
+  if(df$impact.player[i] == df$impact.player[i-2] & df$shot[i] == df$shot[i-2] + 2) {
+    
+    df$p.start.x[i]=df$start.x[i-2]
+    df$p.start.y[i]=df$start.y[i-2]
+    
+  }
+  
+}
+
+
+
+
+#adding angle between fed.shot-opp.shot vector and opp.shot-opp.ballmark vector
+#doing it in one line because df doesn't want to add vectors
+
+df <- df %>%
+  mutate(o.angle = NA)
+
+  
+for (i in 1:nrow(df)) {
+  
+  x1 <- df$p.start.x[i]
+  y1 <- df$p.start.y[i]
+  x2 <- df$oppo.hit.x[i]
+  y2 <- df$oppo.hit.y[i]
+  x3 <- df$oppo.ballmark.x[i]
+  y3 <- df$oppo.ballmark.y[i]
+  
+  o.angle <- acos(
+  ((c(x1,y1)-c(x2,y2))/sqrt((x1-x2)^2+(y1-y2)^2)) %*%
+    ((c(x2,y2)-c(x3,y3))/sqrt((x2-x3)^2+(y2-y3)^2))) * 180/pi
+  
+  df$o.angle[i] = ifelse(o.angle > 90, 180-o.angle, o.angle)
+  
+}
+
+
+#Now adding the angle the player hits
+df <- df %>%
+  mutate(p.angle = NA)
+  
+for (i in 1:nrow(df)) {
+  
+  x1 <- df$oppo.hit.x[i]
+  y1 <- df$oppo.hit.y[i]
+  x2 <- df$start.x[i]
+  y2 <- df$start.y[i]
+  x3 <- df$ballmark.x[i]
+  y3 <- df$ballmark.y[i]
+  
+  p.angle <- acos(
+  ((c(x1,y1)-c(x2,y2))/sqrt((x1-x2)^2+(y1-y2)^2)) %*%
+    ((c(x2,y2)-c(x3,y3))/sqrt((x2-x3)^2+(y2-y3)^2))) * 180/pi
+  
+  df$p.angle[i] = ifelse(p.angle > 90, 180-p.angle, p.angle)
+  
+}
+
+
+
+```
+
+
+
+
+
+
+
+
+```{r}
+
+# df_long <- df %>% 
+#             filter(end_of_point == 1) %>%
+#             gather(key = vars, value = value, x01:z32)
+
+```
+
+
+
+```{r}
+
+# ggplot(df_long) + 
+#   geom_boxplot(aes(x = as.factor(winner), y = value, fill = as.factor(winner))) + 
+#   facet_wrap(~vars, scale = "free_y")
+
+
+
+
+```
+
+
+
+
+
+
+## Filtering Data Set
+
+In order to determine whether the last shot of the point was a winner or error, I filtered the data so that we are only looking at the last point of the rally. 
+
+```{r}
+
+df <- df %>% filter(end_of_point == 1) %>% filter(hitpoint != "S")
+
+
+
+df <- df %>% dplyr::select(-server.score,
+                          -receiver.score,
+                          -server.won,
+                          -impact.player,
+                          -server,
+                          -receiver, 
+                          -serve.classification,
+                          -start2,
+                          -end2, 
+                          -forced, 
+                          -unforced,
+                          -end_of_point,
+                          -p.start.x,
+                          -p.start.y,
+                          -o.angle,
+                          -id)
+
+```
+
+
+
+
+
+
+
+
+
+# Classification Models
+## Training and Test
+
+```{r training_and_test}
+
+set.seed(1000)
+idx <- sample(nrow(df), nrow(df) * (2/3)) 
+
+tr  <- df[idx,]
+ts  <- df[-idx,]
+
+
+
+ts2 <- federer2017[-idx,]
+
+
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+### Random Forest and Variable Selection Based Off Accuracy Measures
+
+```{r random_forest}
+
+tr_rf   <- tr %>% 
+            dplyr::select(-winner) %>% 
+            randomForest(tr$winner,
+                          ntree=2000, 
+                          importance = TRUE)
+
+
+pred_rf <- predict(tr_rf, 
+                   ts %>% dplyr::select(-winner), 
+                   type="class") #Prediction using test data
+
+df_rf <- data.frame(Actual = ts$winner, 
+                    Predicted = pred_rf,
+                    stringsAsFactors = FALSE)
+
+table(Actual = ts$winner, Predicted = pred_rf)
+
+
+
+rf_imp <- data.frame(Var = rownames(tr_rf$importance), tr_rf$importance, stringsAsFactors = FALSE) %>%
+                     arrange(desc(MeanDecreaseAccuracy))
+
+varImpPlot(tr_rf, sort = TRUE)
+
+
+
+
+
+
+
+
+### Filtering the Columns Based Off Importance ###
+
+rf_imp$dummy <- ifelse(rf_imp$MeanDecreaseGini > 4.5 | rf_imp$MeanDecreaseAccuracy > 0.0003, 1, 0)
+rf_imp       <- rf_imp[which(rf_imp$dummy == 1),]
+rf_var_list  <- rf_imp$Var
+rf_var_list  <- append(rf_var_list, "winner")
+
+
+
+
+tr <- tr[, which(colnames(tr) %in% rf_var_list)]
+ts <- ts[, which(colnames(ts) %in% rf_var_list)]
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+### Random Forest With Most Important Variables
+
+```{r random_forest2}
+
+tr_rf   <- tr %>% 
+            dplyr::select(-winner) %>% 
+            randomForest(tr$winner,
+                          ntree=2000, 
+                          importance = TRUE)
+
+
+pred_rf <- predict(tr_rf, 
+                   ts %>% dplyr::select(-winner), 
+                   type="class") #Prediction using test data
+
+
+
+df_rf <- data.frame(Actual = ts$winner, 
+                    Predicted = pred_rf,
+                    stringsAsFactors = FALSE)
+
+
+
+(rf_table <- table(Actual = ts$winner, Predicted = pred_rf))
+
+
+
+rf_imp <- data.frame(Var = rownames(tr_rf$importance), tr_rf$importance, stringsAsFactors = FALSE) %>%
+          arrange(desc(MeanDecreaseAccuracy))
+
+
+varImpPlot(tr_rf, sort = TRUE)
+
+```
+
+
+
+
+
+
+
+## SVM
+
+### SVM Radial
+
+```{r svm_radial}
+
+tr_svm_radial   <- svm(winner ~ ., 
+                      data = tr, 
+                      kernel = "radial")
+
+
+pred_svm_radial <- predict(tr_svm_radial, ts)          
+df_svm_radial   <- data.frame(Actual = ts$winner, 
+                              Predicted = pred_svm_radial) 
+
+
+(svm_radial_table <- table(ts$winner, pred_svm_radial))
+
+```
+
+
+
+
+
+
+
+
+
+
+
+### SVM Linear
+
+```{r svm_linear}
+
+tr_svm_linear   <- svm(winner ~ ., 
+                      data = tr, 
+                      kernel = "linear")
+
+
+pred_svm_linear <- predict(tr_svm_linear, ts)          
+df_svm_linear   <- data.frame(Actual = ts$winner, 
+                              Predicted = pred_svm_linear) 
+
+
+(svm_linear_table <- table(ts$winner, pred_svm_linear))
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+### SVM Polynomial
+
+```{r svm_polynomial}
+
+tr_svm_polynomial   <- svm(winner ~ ., 
+                      data = tr, 
+                      kernel = "polynomial",
+                      degree = 2)
+
+
+pred_svm_polynomial <- predict(tr_svm_polynomial, ts)          
+df_svm_polynomial   <- data.frame(Actual = ts$winner, 
+                                  Predicted = pred_svm_polynomial) 
+
+
+(svm_polynomial_table <- table(ts$winner, pred_svm_polynomial))
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+### Decision Tree 
+
+```{r decision_tree}
+
+tr_decisiontree <- rpart(winner ~ ., 
+                         data=tr,
+                         method="class")         
+
+prp(tr_decisiontree)     
+
+
+
+pred_decisiontree <- predict(tr_decisiontree,              
+                             ts, 
+                             type="class")
+
+
+df_decisiontree   <- data.frame(Actual    = ts$winner, 
+                                Predicted = pred_decisiontree,
+                                stringsAsFactors = FALSE) 
+
+
+(decision_tree_table <- table(Actual    = ts$winner, 
+                              Predicted = pred_decisiontree))
+
+
+```
+
+
+
+
+
+
+
+
+### LDA
+
+```{r LDA}
+# lda_sub_df <- tr %>% select()
+#
+# num_of_aces <- tr %>% group_by(winner) %>% summarise(n = n()) %>% mutate(prop = n/sum(n))
+#
+# lda_model <- lda(winner ~ .,                    
+#                  data = tr,    
+#                  prior = c(num_of_aces$prop[1], num_of_aces$prop[2]),         
+#                  kernel="radial")
+# 
+# pred_lda <- predict(lda_model, ts, type="class")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+### Penalized LDA
+
+```{r penalizedLDA}
+
+cls <- ifelse(tr[,"winner"] == 1, 2, 1)
+# set.seed(1)
+# tr_plda <- PenalizedLDA(as.matrix(tr[,-c(21)]), cls, 
+#                         as.matrix(ts[,-c(21)]), lambda=0.001, K=1)
+# 
+# 
+# 
+# table(Actual = ts$serve_classification, tr_plda$ypred)
+
+```
+
+
+
+
+
+
+### XGBoost
+
+```{r xgboost}
+
+
+cls <- ifelse(tr[,"winner"] == 1, 2, 1)
+
+dtrain <- tr %>% 
+          dplyr::select(-winner) %>% 
+          as.matrix %>% 
+          xgb.DMatrix(label=cls)
+
+param <- list(max.depth = 2, eta = 1, silent = 1)
+tr_xgb <- xgb.train(param, dtrain, nthread = 2, nround = 10)
+
+
+ts_matrix <- ts %>% 
+              dplyr::select(-winner) %>% 
+              as.matrix
+
+pxgb <- round(predict(tr_xgb, ts_matrix), 0)
+
+pxgb <- ifelse(pxgb == 2, 1, 0)
+pxgb <- as.factor(pxgb)
+
+
+
+
+(xgboost_table <- table(ts$winner, pxgb))
+
+df_xgboost   <- data.frame(Actual    = ts$winner, 
+                           Predicted = pxgb,
+                           stringsAsFactors = FALSE) 
+
+
+
+```
+
+
+
+
+
+
+
+
+
+### Logit
+
+It was important to explore the Logistic Regression and Probit models due to the separation of some variables in the data with respect to the Serve Classification. For example, if we look at a plot of the speed of a serve and distinguish the serves by "Ace" or "Other", we can see a distinct relationship between the two. This plot is shown below.
+
+```{r binary_plot_speed}
+
+# ggplot(data = tr, aes(x = speed, y = ifelse(serve_classification == "Ace", 1, 0), colour = serve_classification)) + 
+#   geom_point() +
+#   xlab("Speed") + 
+#   ylab("Ace/Other") + 
+#   ggtitle("Aces by Speed") + 
+#   theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+
+
+```{r logit}
+
+tr_logit   <- glm(winner ~ ., family = binomial(link="logit"), data = tr)
+
+
+tr_logit   <- suppressWarnings(step(tr_logit, direction = "backward", trace = FALSE))
+tr_logit %>% summary
+
+
+pred_logit <- predict(tr_logit, ts, type="response")
+pred_logit <- ifelse(pred_logit >= 0.5, 1, 0)
+
+df_logit   <- data.frame(Actual    = ts$winner, 
+                         Predicted = pred_logit,
+                         stringsAsFactors = FALSE) 
+
+
+(logit_table <- table(Actual    = ts$winner, 
+                      Predicted = pred_logit))
+
+
+
+```
+
+The Logistic Regression model has performed extremely well, with an overall misclassification error of `r logit_table[1, 2] + logit_table[2, 1]`. Encouragingly, the actual number of correctly predicted aces was also impressive, with the model correctly predicting `r logit_table[2, 2]` out of the `r sum(logit_table[1, ])` aces in the training set. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+### Probit
+
+```{r probit}
+tr_probit   <- glm(winner ~ ., family = binomial(link="probit"), data = tr)
+tr_probit %>% summary
+
+tr_probit   <- suppressWarnings(step(tr_probit, trace = FALSE))
+
+
+
+pred_probit <- predict(tr_probit, ts, type="response")
+pred_probit <- ifelse(pred_probit >= 0.5, 1, 0)
+
+df_probit   <- data.frame(Actual    = ts$winner, 
+                          Predicted = pred_probit,
+                          stringsAsFactors = FALSE) 
+
+
+(probit_table  <- table(Actual    = ts$winner, 
+                        Predicted = pred_probit))
+
+
+
+```
+
+The Probit model didn't perform as strongly as the Logistic Regression model, with the number of misclassifications being `r probit_table[1, 2] + probit_table[2, 1]` and the number of correctly predicted aces being `r probit_table[1, 1]`. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+### All Predictions Combined
+
+In order to compare the results of each classification method, I've created a data frame of all predictions side by side called "comparison". In addition, I created the data frame "error_count" to show the total misclassifications for each class along with the number of correctly predicted aces, so the methods can be directly compared to one another.  
+
+```{r comparison}
+comparison <- data.frame(Actual            = ts$winner,
+                         'Random Forest'   = df_rf$Predicted,
+                         'SVM Radial'      = df_svm_radial$Predicted,
+                         'SVM Linear'      = df_svm_linear$Predicted,
+                         'SVM Polynomial'  = df_svm_polynomial$Predicted,
+                         XGBoost           = df_xgboost$Predicted,
+                         Logit             = df_logit$Predicted,
+                         Probit            = df_probit$Predicted, stringsAsFactors = FALSE)
+
+
+
+
+error_count <- data.frame('Random Forest'  = c(sum(comparison$Random.Forest  != comparison$Actual), rf_table[2, 2]),
+                          'SVM Radial'     = c(sum(comparison$SVM.Radial     != comparison$Actual), svm_radial_table[2, 2]), 
+                          'SVM Linear'     = c(sum(comparison$SVM.Linear     != comparison$Actual), svm_linear_table[2, 2]),
+                          'SVM Polynomial' = c(sum(comparison$SVM.Polynomial != comparison$Actual), svm_polynomial_table[2, 2]),
+                          XGBoost          = c(sum(comparison$XGBoost        != comparison$Actual), xgboost_table[2, 2]),
+                          Logit            = c(sum(comparison$Logit          != comparison$Actual), logit_table[2, 2]),
+                          Probit           = c(sum(comparison$Probit         != comparison$Actual), probit_table[2, 2]), 
+                          stringsAsFactors = FALSE)
+
+
+rownames(error_count) <- c("Total Misclassifications", "Correct Winner Predictions")
+
+
+
+error_count$Best <- c(ifelse(min(error_count[1,]) == error_count$Random.Forest[1],  "Random Forest",
+                      ifelse(min(error_count[1,]) == error_count$SVM.Radial[1],     "SVM Radial",
+                      ifelse(min(error_count[1,]) == error_count$SVM.Linear[1],     "SVM Linear",
+                      ifelse(min(error_count[1,]) == error_count$SVM.Polynomial[1], "SVM Polynomial",
+                      ifelse(min(error_count[1,]) == error_count$XGBoost[1],        "XGBoost", "Logit"))))),
+                    
+                      ifelse(max(error_count[2,]) == error_count$Random.Forest[2],  "Random Forest",
+                      ifelse(max(error_count[2,]) == error_count$SVM.Radial[2],     "SVM Radial",
+                      ifelse(max(error_count[2,]) == error_count$SVM.Linear[2],     "SVM Linear",
+                      ifelse(max(error_count[2,]) == error_count$SVM.Polynomial[2], "SVM Polynomial",
+                      ifelse(max(error_count[2,]) == error_count$XGBoost[2],        "XGBoost", "Logit"))))))
+
+
+kable(error_count, caption = "Model Performance", align = c("c","c","c","c","c","c","c","c","c"))
+                         
+```
+
+
+
+
+
+## Identifying Patterns in Clear Winners vs. Unpredictable Winners
+
+```{r}
+
+actual_winners <- cbind(ts,
+                        'Random Forest'   = df_rf$Predicted,
+                         'SVM Radial'      = df_svm_radial$Predicted,
+                         'SVM Linear'      = df_svm_linear$Predicted,
+                         'SVM Polynomial'  = df_svm_polynomial$Predicted,
+                         XGBoost           = df_xgboost$Predicted,
+                         Logit             = df_logit$Predicted,
+                         Probit            = df_probit$Predicted) %>% 
+                  filter(winner == 1)
+                        
+
+actual_winners$`Random Forest`  <- as.numeric(actual_winners$`Random Forest`)
+actual_winners$`SVM Radial`     <- as.numeric(actual_winners$`SVM Radial`)
+actual_winners$`SVM Linear`     <- as.numeric(actual_winners$`SVM Linear`)
+actual_winners$`SVM Polynomial` <- as.numeric(actual_winners$`SVM Polynomial`)
+actual_winners$XGBoost          <- as.numeric(actual_winners$XGBoost)
+
+
+
+
+actual_winners$countif       <- NA
+actual_winners$Winners_Count <- NA
+
+
+
+
+for (i in 1:nrow(actual_winners)) {
+  
+  actual_winners$countif[i] <- sum(actual_winners[i, (ncol(actual_winners)-8):(ncol(actual_winners)-2)])
+  
+  if (actual_winners$countif[i] >= 6 || actual_winners$countif[i] == 0) {
+    
+    actual_winners$Winners_Count[i] <- 1
+    
+  } else {
+    
+    actual_winners$Winners_Count[i] <- 0
+    
+  }
+  
+}
+
+
+
+actual_winners <- actual_winners %>% 
+                    filter(Winners_Count == 1)
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
