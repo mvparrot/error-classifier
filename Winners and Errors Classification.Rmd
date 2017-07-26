@@ -490,8 +490,10 @@ ts2 <- federer2017[-idx,]
 tr_rf   <- tr %>% 
             dplyr::select(-winner) %>% 
             randomForest(tr$winner,
-                          ntree=2000, 
+                          ntree=1000, 
                           importance = TRUE)
+
+plot(tr_rf, main = "Random Forest Model")
 
 
 pred_rf <- predict(tr_rf, 
@@ -502,7 +504,7 @@ df_rf <- data.frame(Actual = ts$winner,
                     Predicted = pred_rf,
                     stringsAsFactors = FALSE)
 
-table(Actual = ts$winner, Predicted = pred_rf)
+(rf_table1 <- table(Actual = ts$winner, Predicted = pred_rf))
 
 
 
@@ -515,7 +517,13 @@ varImpPlot(tr_rf, sort = TRUE)
 
 
 
+```
 
+Based off the Out-of-Bag sample, the estimated error rate on the test set was deemed to be 34.67%. The actual error rate on the test set ended up being `r paste((rf_table1[1,2] + rf_table1[2,1] / sum(rf_table1)) * 100, "%", sep = "")`. However, this Random Forest was conducted on the entire set of variables, so the next step would be to filter out potential noise variables and then refit the Random Forest model. 
+
+The variables that I kept were the ones that either had a "MeanDecreaseGini" of greater than 4.5 or a "MeanDecreaseAccuracy" of greater than 0.0003
+
+```{r filtering_columns_using_randomForest}
 
 
 ### Filtering the Columns Based Off Importance ###
@@ -527,11 +535,10 @@ rf_var_list  <- append(rf_var_list, "winner")
 
 
 
+### Keeping only the variables in "rf_var_list"
 
 tr <- tr[, which(colnames(tr) %in% rf_var_list)]
 ts <- ts[, which(colnames(ts) %in% rf_var_list)]
-
-
 
 ```
 
@@ -543,16 +550,19 @@ ts <- ts[, which(colnames(ts) %in% rf_var_list)]
 
 
 
-
 ### Random Forest With Most Important Variables
+
+Once the less important variables were filtered out, I refit the Random Forest model once again. Frustratingly, this didn't really improve the results of the classifier. 
 
 ```{r random_forest2}
 
 tr_rf   <- tr %>% 
             dplyr::select(-winner) %>% 
             randomForest(tr$winner,
-                          ntree=2000, 
+                          ntree=1000, 
                           importance = TRUE)
+
+plot(tr_rf, main = "Random Forest Model")
 
 
 pred_rf <- predict(tr_rf, 
@@ -579,7 +589,7 @@ varImpPlot(tr_rf, sort = TRUE)
 
 ```
 
-
+In this case, the classifier predicted an Out-of-Bag error rate of 34.23%, compared to 34.67% in the first fit of the Random Forest. In addition, the test set error was the exact same as earlier, with an error rate of `r paste((rf_table[1,2] + rf_table[2,1] / sum(rf_table)) * 100, "%", sep = "")`. In fact, this refined Random Forest model had the exact same predictions as the last model. 
 
 
 
@@ -717,46 +727,8 @@ df_decisiontree   <- data.frame(Actual    = ts$winner,
 
 
 
-### LDA
-
-```{r LDA}
-# lda_sub_df <- tr %>% select()
-#
-# num_of_aces <- tr %>% group_by(winner) %>% summarise(n = n()) %>% mutate(prop = n/sum(n))
-#
-# lda_model <- lda(winner ~ .,                    
-#                  data = tr,    
-#                  prior = c(num_of_aces$prop[1], num_of_aces$prop[2]),         
-#                  kernel="radial")
-# 
-# pred_lda <- predict(lda_model, ts, type="class")
-```
 
 
-
-
-
-
-
-
-
-
-
-
-### Penalized LDA
-
-```{r penalizedLDA}
-
-cls <- ifelse(tr[,"winner"] == 1, 2, 1)
-# set.seed(1)
-# tr_plda <- PenalizedLDA(as.matrix(tr[,-c(21)]), cls, 
-#                         as.matrix(ts[,-c(21)]), lambda=0.001, K=1)
-# 
-# 
-# 
-# table(Actual = ts$serve_classification, tr_plda$ypred)
-
-```
 
 
 
@@ -791,7 +763,7 @@ pxgb <- as.factor(pxgb)
 
 
 
-(xgboost_table <- table(ts$winner, pxgb))
+(xgboost_table <- table(Actual = ts$winner, Predicted = pxgb))
 
 df_xgboost   <- data.frame(Actual    = ts$winner, 
                            Predicted = pxgb,
@@ -906,7 +878,7 @@ The Probit model didn't perform as strongly as the Logistic Regression model, wi
 
 ### All Predictions Combined
 
-In order to compare the results of each classification method, I've created a data frame of all predictions side by side called "comparison". In addition, I created the data frame "error_count" to show the total misclassifications for each class along with the number of correctly predicted aces, so the methods can be directly compared to one another.  
+In order to compare the results of each classification method, I've created a data frame of all predictions side by side called "comparison". In addition, I created the data frame "error_count" to show the total misclassifications for each class along with the number of correctly predicted aces, so the methods can be directly compared to one another. 
 
 ```{r comparison}
 comparison <- data.frame(Actual            = ts$winner,
@@ -914,6 +886,7 @@ comparison <- data.frame(Actual            = ts$winner,
                          'SVM Radial'      = df_svm_radial$Predicted,
                          'SVM Linear'      = df_svm_linear$Predicted,
                          'SVM Polynomial'  = df_svm_polynomial$Predicted,
+                         'Decision Tree'   = df_decisiontree$Predicted,
                          XGBoost           = df_xgboost$Predicted,
                          Logit             = df_logit$Predicted,
                          Probit            = df_probit$Predicted, stringsAsFactors = FALSE)
@@ -925,6 +898,7 @@ error_count <- data.frame('Random Forest'  = c(sum(comparison$Random.Forest  != 
                           'SVM Radial'     = c(sum(comparison$SVM.Radial     != comparison$Actual), svm_radial_table[2, 2]), 
                           'SVM Linear'     = c(sum(comparison$SVM.Linear     != comparison$Actual), svm_linear_table[2, 2]),
                           'SVM Polynomial' = c(sum(comparison$SVM.Polynomial != comparison$Actual), svm_polynomial_table[2, 2]),
+                          'Decision Tree'  = c(sum(comparison$Decision.Tree  != comparison$Actual), decision_tree_table[2, 2]),
                           XGBoost          = c(sum(comparison$XGBoost        != comparison$Actual), xgboost_table[2, 2]),
                           Logit            = c(sum(comparison$Logit          != comparison$Actual), logit_table[2, 2]),
                           Probit           = c(sum(comparison$Probit         != comparison$Actual), probit_table[2, 2]), 
@@ -939,18 +913,24 @@ error_count$Best <- c(ifelse(min(error_count[1,]) == error_count$Random.Forest[1
                       ifelse(min(error_count[1,]) == error_count$SVM.Radial[1],     "SVM Radial",
                       ifelse(min(error_count[1,]) == error_count$SVM.Linear[1],     "SVM Linear",
                       ifelse(min(error_count[1,]) == error_count$SVM.Polynomial[1], "SVM Polynomial",
-                      ifelse(min(error_count[1,]) == error_count$XGBoost[1],        "XGBoost", "Logit"))))),
+                      ifelse(min(error_count[1,]) == error_count$Decision.Tree[1],  "Decision Tree",
+                      ifelse(min(error_count[1,]) == error_count$XGBoost[1],        "XGBoost", "Logit")))))),
                     
                       ifelse(max(error_count[2,]) == error_count$Random.Forest[2],  "Random Forest",
                       ifelse(max(error_count[2,]) == error_count$SVM.Radial[2],     "SVM Radial",
                       ifelse(max(error_count[2,]) == error_count$SVM.Linear[2],     "SVM Linear",
                       ifelse(max(error_count[2,]) == error_count$SVM.Polynomial[2], "SVM Polynomial",
-                      ifelse(max(error_count[2,]) == error_count$XGBoost[2],        "XGBoost", "Logit"))))))
+                      ifelse(max(error_count[2,]) == error_count$Decision.Tree[2],  "Decision Tree",       
+                      ifelse(max(error_count[2,]) == error_count$XGBoost[2],        "XGBoost", "Logit")))))))
 
 
-kable(error_count, caption = "Model Performance", align = c("c","c","c","c","c","c","c","c","c"))
+kable(error_count, caption = "Model Performance", align = c("c","c","c","c","c","c","c","c","c","c"))
                          
 ```
+
+
+
+
 
 
 
@@ -960,43 +940,38 @@ kable(error_count, caption = "Model Performance", align = c("c","c","c","c","c",
 
 ```{r}
 
-actual_winners <- cbind(ts,
-                        'Random Forest'   = df_rf$Predicted,
-                         'SVM Radial'      = df_svm_radial$Predicted,
-                         'SVM Linear'      = df_svm_linear$Predicted,
-                         'SVM Polynomial'  = df_svm_polynomial$Predicted,
-                         XGBoost           = df_xgboost$Predicted,
-                         Logit             = df_logit$Predicted,
-                         Probit            = df_probit$Predicted) %>% 
-                  filter(winner == 1)
+identifying_trends <- cbind(ts,
+                        comparison)
                         
 
-actual_winners$`Random Forest`  <- as.numeric(actual_winners$`Random Forest`)
-actual_winners$`SVM Radial`     <- as.numeric(actual_winners$`SVM Radial`)
-actual_winners$`SVM Linear`     <- as.numeric(actual_winners$`SVM Linear`)
-actual_winners$`SVM Polynomial` <- as.numeric(actual_winners$`SVM Polynomial`)
-actual_winners$XGBoost          <- as.numeric(actual_winners$XGBoost)
+identifying_trends$Pred_RF             <- ifelse(identifying_trends$Random.Forest == "0", 0, 1)
+identifying_trends$Pred_SVM_Radial     <- ifelse(identifying_trends$SVM.Radial == "0", 0, 1)
+identifying_trends$Pred_SVM_Linear     <- ifelse(identifying_trends$SVM.Linear == "0", 0, 1)
+identifying_trends$Pred_SVM_Polynomial <- ifelse(identifying_trends$SVM.Polynomial == "0", 0, 1)
+identifying_trends$Pred_XGBoost        <- ifelse(identifying_trends$XGBoost == "0", 0, 1)
+
+
+identifying_trends <- identifying_trends %>% 
+                        dplyr::select(-Random.Forest, -SVM.Radial, -SVM.Linear, -SVM.Polynomial, -XGBoost)
+
+identifying_trends$countif   <- NA
+identifying_trends$Dummy     <- NA
 
 
 
 
-actual_winners$countif       <- NA
-actual_winners$Winners_Count <- NA
-
-
-
-
-for (i in 1:nrow(actual_winners)) {
+for (i in 1:nrow(identifying_trends)) {
   
-  actual_winners$countif[i] <- sum(actual_winners[i, (ncol(actual_winners)-8):(ncol(actual_winners)-2)])
+  identifying_trends$countif[i] <- sum(identifying_trends[i, (ncol(identifying_trends)-8):(ncol(identifying_trends)-2)])
   
-  if (actual_winners$countif[i] >= 6 || actual_winners$countif[i] == 0) {
+  if ((identifying_trends$countif[i] >= 5 && identifying_trends$Actual[i] == 1) || 
+      (identifying_trends$countif[i] == 0 && identifying_trends$Actual[i] == 0)) {
     
-    actual_winners$Winners_Count[i] <- 1
+    identifying_trends$Dummy[i] <- 1
     
   } else {
     
-    actual_winners$Winners_Count[i] <- 0
+    identifying_trends$Dummy[i] <- 0
     
   }
   
@@ -1004,8 +979,88 @@ for (i in 1:nrow(actual_winners)) {
 
 
 
-actual_winners <- actual_winners %>% 
-                    filter(Winners_Count == 1)
+identifying_trends <- identifying_trends %>% 
+                        filter(Dummy == 1)
+
+
+```
+
+
+
+
+```{r}
+
+ident_trends_long1 <- identifying_trends %>% gather(key = variable, value = stat, seconds:z32)
+
+
+ggplot(data = ident_trends_long1, aes(x = winner, y = stat)) + 
+  geom_boxplot(aes(fill = winner)) + 
+  facet_wrap(~variable, scales = "free")
+
+
+
+
+
+
+ident_trends_long2 <- identifying_trends %>% gather(key = variable, value = stat, start:importance)
+
+
+ggplot(data = ident_trends_long2, aes(x = winner, y = stat)) + 
+  geom_boxplot(aes(fill = winner)) + 
+  facet_wrap(~variable, scales = "free")
+
+
+
+
+
+
+
+ident_trends_long3 <- identifying_trends %>% gather(key = variable, value = stat, ballmark_x_ballmark_y:p.angle)
+
+
+ggplot(data = ident_trends_long3, aes(x = winner, y = stat)) + 
+  geom_boxplot(aes(fill = winner)) + 
+  facet_wrap(~variable, scales = "free")
+
+
+
+
+```
+
+Based off these various boxplots, I deemed that the following variables were the variables with the best separation:
+
+* oppo.hit.y
+* oppo.hit.z
+* oppo.speed
+* oppo.ballmark.y
+* oppo_ballmark_x_ballmark_y
+* short.dist
+* speed.diff
+* speed.ratio
+* ballmark.y
+* speed1
+* speed2
+* start.z
+* end
+* final.y
+
+As a result, I decided to refit all classification models with this subset of variables.
+
+
+# Final Classification Models
+
+## Using the Stated Subset of Variables
+
+```{r}
+
+var_list <- c("oppo.hit.y", "oppo.hit.z", "oppo.speed", "oppo.ballmark.y", "oppo_ballmark_x_ballmark_y",
+              "short.dist", "speed.diff", "speed.ratio", "ballmark.y", "speed1", "speed2", "start.z", 
+              "end", "final.y", "winner")
+
+
+
+tr3 <- tr[, which(colnames(tr) %in% var_list)]
+ts3 <- ts[, which(colnames(ts) %in% var_list)]
 
 
 ```
@@ -1016,6 +1071,130 @@ actual_winners <- actual_winners %>%
 
 
 
+### Random Forest With Most Important Variables
+
+Once the less important variables were filtered out, I refit the Random Forest model once again. Frustratingly, this didn't really improve the results of the classifier. 
+
+```{r random_forest3}
+
+tr_rf2   <- tr3 %>% 
+            dplyr::select(-winner) %>% 
+            randomForest(tr3$winner,
+                          ntree=1000, 
+                          importance = TRUE)
+
+plot(tr_rf2, main = "Random Forest Model")
+
+
+pred_rf2 <- predict(tr_rf2, 
+                   ts3 %>% dplyr::select(-winner), 
+                   type="class") #Prediction using test data
+
+
+
+df_rf2 <- data.frame(Actual = ts3$winner, 
+                    Predicted = pred_rf2,
+                    stringsAsFactors = FALSE)
+
+
+
+(rf_table2 <- table(Actual = ts3$winner, Predicted = pred_rf2))
+
+
+
+rf_imp2 <- data.frame(Var = rownames(tr_rf2$importance), tr_rf2$importance, stringsAsFactors = FALSE) %>%
+          arrange(desc(MeanDecreaseAccuracy))
+
+
+varImpPlot(tr_rf2, sort = TRUE)
+
+```
+
+In this case, the classifier predicted an Out-of-Bag error rate of 33.48%, compared to 34.67% in the first fit of the Random Forest. This was quite a substantial improvement. The test set error was the exact same as earlier, with an error rate of `r paste((rf_table2[1,2] + rf_table2[2,1] / sum(rf_table2)) * 100, "%", sep = "")`. This was slightly better than the previous Random Forest model.
+
+
+
+
+
+## SVM
+
+### SVM Radial
+
+```{r svm_radial2}
+
+tr_svm_radial2   <- svm(winner ~ ., 
+                      data = tr3, 
+                      kernel = "radial")
+
+
+pred_svm_radial2 <- predict(tr_svm_radial2, ts3)          
+df_svm_radial2   <- data.frame(Actual = ts3$winner, 
+                              Predicted = pred_svm_radial2) 
+
+
+(svm_radial_table2 <- table(Actual = ts3$winner, Predicted = pred_svm_radial2))
+
+```
+
+The SVM Radial model had the same number of misclassifications as before, but this time the number of correctly predicted winners actually decreased. Therefore, the model was worse than previously. 
+
+
+
+
+
+
+
+
+
+### SVM Linear
+
+```{r svm_linear2}
+
+tr_svm_linear2   <- svm(winner ~ ., 
+                      data = tr3, 
+                      kernel = "linear")
+
+
+pred_svm_linear2 <- predict(tr_svm_linear2, ts3)          
+df_svm_linear2   <- data.frame(Actual = ts3$winner, 
+                              Predicted = pred_svm_linear2) 
+
+
+(svm_linear_table2 <- table(Actual = ts3$winner, Predicted = pred_svm_linear2))
+
+```
+
+The SVM Linear model had only `r svm_linear_table2[1,2] + svm_linear_table2[2,1]` misclassifications, but didn't predict one winner, so it is a fairly useless model in this situation. This was a significant decrease in performance compared to the earlier fit, which had only `r error_count$SVM.Linear[1]` misclassifications and correctly predicted `r error_count$SVM.Linear[2]` winners. 
+
+
+
+
+
+
+
+
+
+
+### SVM Polynomial
+
+```{r svm_polynomial2}
+
+tr_svm_polynomial2   <- svm(winner ~ ., 
+                       data = tr3, 
+                       kernel = "polynomial",
+                       degree = 2)
+
+
+pred_svm_polynomial2 <- predict(tr_svm_polynomial2, ts3)          
+df_svm_polynomial2   <- data.frame(Actual = ts3$winner, 
+                                  Predicted = pred_svm_polynomial2) 
+
+
+(svm_polynomial_table2 <- table(Actual = ts3$winner, Predicted = pred_svm_polynomial2))
+
+```
+
+Similarly to the SVM Linear model, the SVM Polynomial model has performed worse than before. The total number of misclassifications is `r svm_polynomial_table2[1, 2] + svm_polynomial_table2[2, 1]` compared to `r error_count$SVM.Polynomial[1]` previously. In addition, the total number of correctly predicted winners was `r svm_polynomial_table2[2, 2]` compared to `r error_count$SVM.Polynomial[2]` previously. 
 
 
 
@@ -1028,6 +1207,412 @@ actual_winners <- actual_winners %>%
 
 
 
+
+
+
+
+
+
+
+### Decision Tree 
+
+```{r decision_tree2}
+
+tr_decisiontree2 <- rpart(winner ~ ., 
+                         data=tr3,
+                         method="class")         
+
+prp(tr_decisiontree2)     
+
+
+
+pred_decisiontree2 <- predict(tr_decisiontree2,              
+                             ts3, 
+                             type="class")
+
+
+df_decisiontree2   <- data.frame(Actual    = ts3$winner, 
+                                Predicted = pred_decisiontree2,
+                                stringsAsFactors = FALSE) 
+
+
+(decision_tree_table2 <- table(Actual    = ts3$winner, 
+                              Predicted = pred_decisiontree2))
+
+
+```
+
+Previously, the Decision Tree model performed so poorly that I didn't include the results in the comparison data frame. However, this instance, the total number of misclassifications has reduced to `r decision_tree_table[1, 2] + decision_tree_table[2, 1]` and encouragingly, the total number of correctly predicted winners has reached `r decision_tree_table[2, 2]`, which is higher than any previous model. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+### XGBoost
+
+```{r xgboost2}
+
+
+cls <- ifelse(tr3[,"winner"] == 1, 2, 1)
+
+dtrain <- tr3 %>% 
+          dplyr::select(-winner) %>% 
+          as.matrix %>% 
+          xgb.DMatrix(label=cls)
+
+param <- list(max.depth = 2, eta = 1, silent = 1)
+tr_xgb2 <- xgb.train(param, dtrain, nthread = 2, nround = 10)
+
+
+ts_matrix2 <- ts3 %>% 
+              dplyr::select(-winner) %>% 
+              as.matrix
+
+pxgb2 <- round(predict(tr_xgb2, ts_matrix2), 0)
+
+pxgb2 <- ifelse(pxgb2 == 2, 1, 0)
+pxgb2 <- as.factor(pxgb2)
+
+
+
+
+(xgboost_table2 <- table(Actual = ts3$winner, Predicted = pxgb2))
+
+
+df_xgboost2   <- data.frame(Actual    = ts3$winner, 
+                           Predicted = pxgb2,
+                           stringsAsFactors = FALSE) 
+
+
+
+```
+
+The Gradient Boosting model improved substantially, with the model correctly predicting `r xgboost_table2[2, 2]` winners and misclassifying `r xgboost_table2[1, 2] + xgboost_table2[2, 1]` observations. This was compared to `r error_count$XGBoost[2]` correctly predicted winners and `r error_count$XGBoost[1]` misclassifications previously. 
+
+
+
+
+
+
+
+### Logit
+
+
+```{r logit2}
+
+tr_logit2   <- glm(winner ~ ., family = binomial(link="logit"), data = tr3)
+
+
+tr_logit2   <- suppressWarnings(step(tr_logit2, direction = "backward", trace = FALSE))
+tr_logit2 %>% summary
+
+
+pred_logit2 <- predict(tr_logit2, ts3, type="response")
+pred_logit2 <- ifelse(pred_logit2 >= 0.5, 1, 0)
+
+df_logit2   <- data.frame(Actual    = ts3$winner, 
+                         Predicted = pred_logit2,
+                         stringsAsFactors = FALSE) 
+
+
+(logit_table2 <- table(Actual    = ts3$winner, 
+                      Predicted = pred_logit2))
+
+
+
+```
+
+Contrary to the Gradient Boosting model, the Logit model performance significantly decreased, with a total number of misclassifications of `r  logit_table2[1,2] + logit_table2[2,1]` compared to `r error_count$Logit[1]` beforehand. In addition, the total number of correctly predicted winners was `r logit_table2[2, 2]` compared to `r error_count$Logit[2]` previously. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+### Probit
+
+```{r probit2}
+tr_probit2   <- glm(winner ~ ., family = binomial(link="probit"), data = tr3)
+tr_probit2 %>% summary
+
+tr_probit2   <- suppressWarnings(step(tr_probit2, trace = FALSE))
+
+
+
+pred_probit2 <- predict(tr_probit2, ts3, type="response")
+pred_probit2 <- ifelse(pred_probit2 >= 0.5, 1, 0)
+
+df_probit2   <- data.frame(Actual    = ts3$winner, 
+                          Predicted = pred_probit2,
+                          stringsAsFactors = FALSE) 
+
+
+(probit_table2  <- table(Actual    = ts3$winner, 
+                        Predicted = pred_probit2))
+
+
+
+```
+
+Similarly to the Logit model, the Probit model has performed significantly worse than previously. It has decreased the number of misclassifications to `r probit_table2[1,2] + probit_table2[2,1]` but the number of correctly predicted winners dropped from `r error_count$Probit[2]` to `r probit_table2[2, 2]`. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+### All Predictions Combined
+
+Just as I did earlier in the report, I've created a data frame of all predictions side by side called "comparison2". In addition, I created the data frame "error_count2" to show the total misclassifications for each class along with the number of correctly predicted aces, so the methods can be directly compared to one another. 
+
+
+```{r comparison2}
+
+comparison2 <- data.frame(Actual            = ts3$winner,
+                          'Random Forest'   = df_rf2$Predicted,
+                          'SVM Radial'      = df_svm_radial2$Predicted,
+                          'SVM Linear'      = df_svm_linear2$Predicted,
+                          'SVM Polynomial'  = df_svm_polynomial2$Predicted,
+                          'Decision Tree'   = df_decisiontree2$Predicted,
+                          XGBoost           = df_xgboost2$Predicted,    
+                          Logit             = df_logit2$Predicted,
+                          Probit            = df_probit2$Predicted, stringsAsFactors = FALSE)
+
+
+
+
+error_count2 <- data.frame('Random Forest'  = c(sum(comparison2$Random.Forest  != comparison2$Actual), rf_table2[2, 2]),
+                           'SVM Radial'     = c(sum(comparison2$SVM.Radial     != comparison2$Actual), svm_radial_table2[2, 2]), 
+                           'SVM Linear'     = c(sum(comparison2$SVM.Linear     != comparison2$Actual), svm_linear_table2[2, 2]),
+                           'SVM Polynomial' = c(sum(comparison2$SVM.Polynomial != comparison2$Actual), svm_polynomial_table2[2, 2]),
+                           'Decision Tree'  = c(sum(comparison2$Decision.Tree  != comparison2$Actual), decision_tree_table2[2, 2]),
+                           XGBoost          = c(sum(comparison2$XGBoost        != comparison2$Actual), xgboost_table2[2, 2]),
+                           Logit            = c(sum(comparison2$Logit          != comparison2$Actual), logit_table2[2, 2]),
+                           Probit           = c(sum(comparison2$Probit         != comparison2$Actual), probit_table2[2, 2]), 
+                           stringsAsFactors = FALSE)
+
+
+rownames(error_count2) <- c("Total Misclassifications", "Correct Winner Predictions")
+
+
+
+error_count2$Best <- c(ifelse(min(error_count2[1,]) == error_count2$Random.Forest[1],  "Random Forest",
+                       ifelse(min(error_count2[1,]) == error_count2$SVM.Radial[1],     "SVM Radial",
+                       ifelse(min(error_count2[1,]) == error_count2$SVM.Linear[1],     "SVM Linear",
+                       ifelse(min(error_count2[1,]) == error_count2$SVM.Polynomial[1], "SVM Polynomial",
+                       ifelse(min(error_count2[1,]) == error_count2$Decision.Tree[1],  "Decision Tree",       
+                       ifelse(min(error_count2[1,]) == error_count2$XGBoost[1],        "XGBoost", "Logit")))))),
+                    
+                       ifelse(max(error_count2[2,]) == error_count2$Random.Forest[2],  "Random Forest",
+                       ifelse(max(error_count2[2,]) == error_count2$SVM.Radial[2],     "SVM Radial",
+                       ifelse(max(error_count2[2,]) == error_count2$SVM.Linear[2],     "SVM Linear",
+                       ifelse(max(error_count2[2,]) == error_count2$SVM.Polynomial[2], "SVM Polynomial",
+                       ifelse(max(error_count2[2,]) == error_count2$Decision.Tree[2],  "Decision Tree",
+                       ifelse(max(error_count2[2,]) == error_count2$XGBoost[2],        "XGBoost", "Logit")))))))
+
+
+
+kable(error_count2, caption = "Model Performance", align = c("c","c","c","c","c","c","c","c","c"))
+
+                         
+```
+
+Ultimately, the best performing model in terms of the total number of misclassifications was the SVM Linear model, with 111 misclassifications. However, closer look at the results of this method shows that it didn't actually predict any winners, so all the misclassifications are from the 111 winners in the test sample. 
+
+The best method in terms of number of correctly predicted winners was the XGBoost model, with 44 correctly predicted winners (out of the 111 in the test sample). 
+
+
+
+
+
+
+
+
+
+## Comparison of Versions of Models
+
+```{r}
+
+all_comparisons <- rbind(error_count[,-ncol(error_count)], 
+                         error_count2[,-ncol(error_count)])
+
+
+new_row  <- data.frame(Random.Forest  = c(ifelse(all_comparisons$Random.Forest[1] < all_comparisons$Random.Forest[3], "V1", "V2"),
+                                          ifelse(all_comparisons$Random.Forest[2] > all_comparisons$Random.Forest[4], "V1", "V2"),
+                                          NA),
+                       
+                       SVM.Radial     = c(ifelse(all_comparisons$SVM.Radial[1] < all_comparisons$SVM.Radial[3], "V1", "V2"),
+                                          ifelse(all_comparisons$SVM.Radial[2] > all_comparisons$SVM.Radial[4], "V1", "V2"),
+                                          NA),
+                       
+                       SVM.Linear     = c(ifelse(all_comparisons$SVM.Linear[1] < all_comparisons$SVM.Linear[3], "V1", "V2"),
+                                          ifelse(all_comparisons$SVM.Linear[2] > all_comparisons$SVM.Linear[4], "V1", "V2"),
+                                          NA),
+                       
+                      SVM.Polynomial = c(ifelse(all_comparisons$SVM.Polynomial[1] < all_comparisons$SVM.Polynomial[3], "V1", "V2"),
+                                         ifelse(all_comparisons$SVM.Polynomial[2] > all_comparisons$SVM.Polynomial[4], "V1", "V2"),
+                                         NA),
+                                          
+                       Decision.Tree  = c(ifelse(all_comparisons$Decision.Tree[1] < all_comparisons$Decision.Tree[3], "V1", "V2"),
+                                          ifelse(all_comparisons$Decision.Tree[2] > all_comparisons$Decision.Tree[4], "V1", "V2"),
+                                          NA),
+                       
+                       XGBoost        = c(ifelse(all_comparisons$XGBoost[1] < all_comparisons$XGBoost[3], "V1", "V2"),
+                                          ifelse(all_comparisons$XGBoost[2] > all_comparisons$XGBoost[4], "V1", "V2"),
+                                          NA),
+                                          
+                       Logit          = c(ifelse(all_comparisons$Logit[1] < all_comparisons$Logit[3], "V1", "V2"),
+                                          ifelse(all_comparisons$Logit[2] > all_comparisons$Logit[4], "V1", "V2"),
+                                          NA),
+                                          
+                       Probit         = c(ifelse(all_comparisons$Probit[1] < all_comparisons$Probit[3], "V1", "V2"),
+                                          ifelse(all_comparisons$Probit[2] > all_comparisons$Probit[4], "V1", "V2"),
+                                          NA))
+
+all_comparisons <- rbind(all_comparisons, new_row)
+
+
+rownames(all_comparisons) <- c("Misclassifications Version 1", 
+                               "Correct Winner Predictions Version 1",
+                               "Misclassifications Version 2",
+                               "Correct Winner Predictions Version 2",
+                               "Version with Lowest Misclassifications",
+                               "Version with Highest Correct Winner Predictions",
+                               "Best Version")
+
+
+
+# Reclassifying SVM Best Version so there's no ambiguity in the "Best Version" row.
+all_comparisons$SVM.Radial[5] <- "V1"
+
+
+
+
+
+for (i in 1:ncol(all_comparisons)) {
+  
+  if (all_comparisons[5, i] == all_comparisons[6, i]) {
+    
+    all_comparisons[7, i] <- all_comparisons[5, i]
+    
+  } else {
+    
+    all_comparisons[7, i] <- "Both"
+    
+  }
+  
+}
+
+
+
+kable(all_comparisons, caption = "All Comparisons", align = rep("c", ncol(all_comparisons)))
+
+
+```
+
+As we can see from the "all_comparisons" data frame, there are some models that clearly performed better in Version 1 than in Version 2 and vice-versa. There are also some models that had one aspect better in Version 1 but the other aspect being worse than Version 2. 
+
+
+
+
+
+
+
+
+
+
+
+
+# Hybriding Models
+
+Using the best version of each model and then hybriding the results, we could take a look at the Parallel Coordinate plot to inspect the reasons why the models can't classify the winners that well. 
+
+```{r}
+
+
+version1 <- c("SVM.Radial", "SVM.Linear", "SVM.Polynomial", "Logit", "Probit")
+version2 <- c("Decision.Tree", "XGBoost", "Random.Forest")
+
+
+hybrid_comparison   <- cbind(comparison  %>% dplyr::select(Actual, SVM.Radial, SVM.Linear, SVM.Polynomial, Logit, Probit),
+                             comparison2 %>% dplyr::select(Decision.Tree, XGBoost, Random.Forest))
+
+
+
+
+
+
+for (j in 1:ncol(hybrid_comparison)) {
+
+  hybrid_comparison[, j] <- as.numeric(as.character(hybrid_comparison[, j]))
+  
+}
+
+
+hybrid_comparison$Majority <- NA
+
+
+for (i in 1:nrow(hybrid_comparison)) {
+  
+  if (sum(hybrid_comparison[i, c(2:(ncol(hybrid_comparison)-1))]) >= 4) {
+    
+    hybrid_comparison$Majority[i] <- 1
+    
+  } else {
+    
+    hybrid_comparison$Majority[i] <- 0
+    
+  }
+  
+}
+
+
+
+hybrid_comparison$Actual   <- as.factor(hybrid_comparison$Actual)
+hybrid_comparison$Majority <- as.factor(hybrid_comparison$Majority)
+
+
+
+(hybrid_table <- table(Actual    = hybrid_comparison$Actual,
+                       Predicted = hybrid_comparison$Majority))
+
+
+
+```
+
+Unfortunately, the hybrid model based off a majority vote hasn't performed too well. In fact, it was outperformed by the first version of the Logit model just by itself. 
 
 
 
