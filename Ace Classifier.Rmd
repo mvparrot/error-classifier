@@ -1,0 +1,1240 @@
+---
+title: "Error Classifier"
+author: "Dean Dagan"
+date: "19 July 2017"
+output:
+  html_document: default
+  word_document: default
+---
+
+```{r include=FALSE}
+knitr::opts_chunk$set(echo    = TRUE,
+                      warning = FALSE, 
+                      message = FALSE, 
+                      error   = FALSE,
+                      cache   = FALSE)
+
+options(scipen = 999)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+## Loading Data and Libraries
+
+First we need to load in all the libraries that will be used throughout the report.
+
+```{r}
+load("atp_serves.RData")
+df <- atp_serves
+
+
+
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(gridExtra)
+library(GGally)
+library(e1071)
+library(MASS)
+library(randomForest)
+library(gbm)
+library(rpart)
+library(rpart.plot)
+library(penalizedLDA)
+library(xgboost)
+library(foreign)
+library(stringr)
+library(stringi)
+library(devtools)
+library(fpp2)
+library(neuralnet)
+library(caret)
+library(PPtreeViz)
+library(knitr)
+library(ggthemes)
+
+
+```
+
+
+
+
+
+
+
+
+
+## Data Manipulation
+
+An important aspect of the task involves manipulating the data predominantly in order to add created variables that may be relevant to the classification models. In addition, it is important to identity any measurement errors which can cause ineffiiencies in the models if the models are not robust to outliers. 
+
+### Data Manipulation of Various Columns
+
+In this section, I have created multiple variables that I am planning to explore in the classification models. These include variables relating to the hands of the servers compared to the recevers, the differences in age of the two players, the deviation of a player's serve speed from their average speed, an interaction variable to combine the ballmark of the x and y coordinates, etc. 
+
+
+
+```{r data_manipulation}
+
+
+### Removing observation with measurement error ###
+df         <- df %>% filter(start.x > 10)
+atp_serves <- df %>% filter(start.x > 10)
+
+
+
+
+
+### Adding Variables and Re-Classifying "serve_classification" Column ###
+df$server      <- as.character(df$server)
+df$receiver    <- as.character(df$receiver)
+df$winner_name <- toupper(df$winner_name)
+df$loser_name  <- toupper(df$loser_name)
+
+
+
+
+
+
+
+df$server_hand   <- NA
+df$receiver_hand <- NA
+df$server_age    <- NA
+df$receiver_age  <- NA
+df$diff_age      <- NA
+
+
+
+
+for (i in 1:nrow(df)) {
+  
+  if (df$serve_classification[i] == 0) {
+    
+    df$serve_classification[i] <- "Ace"
+    
+  } else {
+    
+    df$serve_classification[i] <- "Other"
+    
+  }
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  if (atp_serves$serve_classification[i] == 0) {
+    
+    atp_serves$serve_classification[i] <- "Ace"
+    
+  } else {
+    
+    atp_serves$serve_classification[i] <- "Other"
+    
+  }
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  if (str_sub(df$winner_name[i], 
+              nchar(df$winner_name[i]) - nchar(df$server[i]) + 1, 
+              nchar(df$winner_name[i])) == df$server[i]) {
+    
+    df$server_hand[i]   <- df$winner_hand[i]
+    df$receiver_hand[i] <- df$loser_hand[i]
+    df$server_age[i]    <- df$winner_age[i]
+    df$receiver_age[i]  <- df$loser_age[i]
+    df$diff_age[i]      <- df$server_age[i] - df$receiver_age[i]
+    
+  } else {
+    
+    df$server_hand[i]   <- df$loser_hand[i]
+    df$receiver_hand[i] <- df$winner_hand[i]
+    df$server_age[i]    <- df$loser_age[i]
+    df$receiver_age[i]  <- df$winner_age[i]
+    df$diff_age[i]      <- df$server_age[i] - df$receiver_age[i]
+
+    
+  }
+  
+  
+  
+  
+  
+  
+  
+  
+}
+
+
+
+
+
+
+df$serve_classification <- as.factor(df$serve_classification)
+df$direction.change     <- as.factor(df$direction.change)
+df$round                <- as.factor(df$round)
+df$winner_hand          <- as.factor(df$winner_hand)
+df$loser_hand           <- as.factor(df$loser_hand)
+df$server_hand          <- as.factor(df$server_hand)
+df$receiver_hand        <- as.factor(df$receiver_hand)
+
+
+
+
+df$right_to_right_deuce <- ifelse(df$side == "Deuce" & df$server_hand == "R" & df$receiver_hand == "R", 1, 0)
+df$right_to_right_ad    <- ifelse(df$side == "Ad" & df$server_hand == "R" & df$receiver_hand == "R", 1, 0)
+
+df$right_to_left_deuce  <- ifelse(df$side == "Deuce" & df$server_hand == "R" & df$receiver_hand == "L", 1, 0)
+df$right_to_left_ad     <- ifelse(df$side == "Ad" & df$server_hand == "R" & df$receiver_hand == "L", 1, 0)
+
+df$left_to_right_deuce  <- ifelse(df$side == "Deuce" & df$server_hand == "L" & df$receiver_hand == "R", 1, 0)
+df$left_to_right_ad     <- ifelse(df$side == "Ad" & df$server_hand == "L" & df$receiver_hand == "R", 1, 0)
+
+df$left_to_left_deuce   <- ifelse(df$side == "Deuce" & df$server_hand == "L" & df$receiver_hand == "L", 1, 0)
+df$left_to_left_ad      <- ifelse(df$side == "Ad" & df$server_hand == "L" & df$receiver_hand == "L", 1, 0)
+
+
+df                      <- df %>% group_by(side, server) %>% mutate(avg_start.y = mean(start.y)) %>% ungroup()
+df$diff_start.y         <- df$start.y - df$avg_start.y
+
+df$centre_x_centre_y    <- df$center.x * df$center.y
+
+
+df <- df %>% 
+      group_by(server) %>% 
+      mutate(player_avg_speed = mean(speed)) %>% 
+      mutate(diff_from_player_avg_speed = speed / player_avg_speed) %>%
+      ungroup()
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+### Removing Irrelevant Columns
+
+```{r select_variables}
+
+df <- df %>% dplyr::select(start.x, 
+                           start.y, 
+                           start.z, 
+                           start.1:serve.x, 
+                           game:side,
+                           serve_classification, 
+                           winner_age,
+                           loser_age,
+                           round,
+                           server_age,
+                           receiver_age,
+                           diff_age,
+                           right_to_right_deuce,
+                           right_to_right_ad,
+                           right_to_left_deuce,
+                           right_to_left_ad,
+                           diff_start.y,
+                           server_hand,
+                           receiver_hand,
+                           centre_x_centre_y,
+                           center.x,
+                           center.y,
+                           diff_from_player_avg_speed)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## Initial Exploration of Data
+### Ace Locations
+
+```{r ace_locations}
+
+ggplot(data = df, aes(x = center.x, y = center.y, colour = serve_classification)) + 
+  geom_point() + 
+  geom_vline(xintercept = 0, colour = "gray70", size = 1.5) + 
+  geom_segment(x = -6.4, y = -4.115, xend = -6.4, yend = 4.115, colour = "black") + 
+  geom_hline(yintercept = 4.115) +
+  geom_hline(yintercept = -4.115) + 
+  geom_segment(x = -6.4, y = 0, xend = 0.45, yend = 0, colour = "black") + 
+  facet_wrap(~side) 
+
+
+
+
+
+
+```
+
+
+
+#### Aces by Side of Court
+
+The initial exploration of the data involved segmenting the sides of the court to determine whether there is a distinct difference between the aces served on one side compared to the other. 
+
+```{r aces_by_side}
+
+aces_by_side <- atp_serves %>% 
+                group_by(side, serve_classification) %>% 
+                summarise(n = n()) %>%
+                mutate(prop = (100*n) / sum(n))
+
+
+kable(aces_by_side, caption = "Serve Classification by Side of Court", align = c("c","c","c","c"))
+
+
+ggplot(data = aces_by_side) + 
+  geom_bar(stat = "identity", aes(x = serve_classification, y = prop, fill = serve_classification)) + 
+  geom_text(aes(x = serve_classification, y = prop, label = paste(round(prop, 1), "%", sep ="")), 
+            size = 4.5, vjust = 1.2, colour = "white") + 
+  ggtitle("Aces by Side of Court") + 
+  ylab("Proportion") + 
+  xlab("Serve Classification") +
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  guides(fill = guide_legend(title = "Serve Classification")) + 
+  facet_wrap(~side, scale = "free_y")
+
+
+
+```
+
+As we can see in the faceted bar graphs, there is no significant difference between the proportion of aces served on one side of the court compared to another overall. 
+
+
+
+#### Aces by Set
+
+```{r aces_by_set}
+aces_by_set  <- atp_serves %>%
+                group_by(set, serve_classification) %>%
+                summarise(n = n()) %>%
+                mutate(prop = (100*n) / sum(n))
+
+
+kable(aces_by_set, caption = "Ace Proportion Per Set", align = c("c","c","c","c"))
+
+
+
+ggplot(data = aces_by_set[which(aces_by_set$serve_classification == "Ace"),]) + 
+  geom_bar(stat = "identity", aes(x = set, y = prop, fill = factor(set))) +
+  geom_point(aes(x = set, y = prop), size = 3, colour = "gray50") + 
+  geom_line(aes(x = set, y = prop), size = 0.9) +
+  ggtitle("Ace Proportion Per Set") + 
+  xlab("Set") + 
+  ylab("Proportion") + 
+  theme(plot.title = element_text(hjust = 0.5, size = 16), legend.position = "none") + 
+  geom_text(aes(x = set, y = prop, label = paste(round(prop, 1), "%", sep ="")), size = 5, vjust = 2, colour = "white")
+
+
+
+
+
+
+```
+
+
+
+
+
+
+
+
+#### Aces by Player and Side of Court
+
+The next step of analysis involved segmenting the aces by individual server and side of the court. Based off the dataset, we could see that some players had much more success on one side of the court than another. 
+
+```{r aces_per_side_and_player}
+aces_per_side_and_player <- atp_serves %>% 
+                            group_by(server, side, serve_classification) %>% 
+                            summarise(n = n()) %>% 
+                            mutate(proportion = (n * 100)/sum(n))
+
+
+
+
+ggplot(data = rbind(aces_per_side_and_player %>% 
+                      filter(serve_classification == "Ace" & side == "Deuce") %>% 
+                      arrange(desc(proportion)) %>%
+                      head(10),
+  
+                      aces_per_side_and_player %>% 
+                      filter(serve_classification == "Ace" & side == "Ad") %>% 
+                      arrange(desc(proportion)) %>%
+                      head(10)),
+         
+         aes(x = reorder(server, proportion), y = proportion, fill = server)) + 
+    
+  geom_bar(stat = "identity") + 
+  geom_text(aes(label = paste(round(proportion, 1), "%", sep ="")), hjust = 1.2, colour = "white") +
+  coord_flip() + 
+  scale_colour_gradientn(colours = rainbow(4)) +
+  xlab("Player") + 
+  ylab("Proportion of Aces") + 
+  ggtitle("Proportion of Aces Per Side of Court") + 
+  theme(legend.position = "none", plot.title = element_text(hjust = 0.5)) +
+  facet_wrap(~side, scale = "free")
+
+
+
+
+
+```
+
+
+
+
+
+
+```{r}
+
+ggplot(data = aces_per_side_and_player %>% 
+                      filter(serve_classification == "Ace"),
+  
+         
+         aes(x = side, y = proportion, fill = side)) + 
+    
+  geom_bar(stat = "identity") +
+  xlab("Player") + 
+  ylab("Proportion of Aces") + 
+  ggtitle("Proportion of Aces Per Side of Court") + 
+  theme(legend.position = "none", plot.title = element_text(hjust = 0.5)) +
+  facet_wrap(~server, scale = "free") 
+
+
+```
+
+
+
+
+
+
+
+#### Aces by Hands of Server, Hands of Receiver and Side of Court
+
+```{r aces_per_side_and_hand}
+aces_per_side_and_hand <- df %>% 
+                            group_by(server_hand, receiver_hand, side, serve_classification) %>% 
+                            summarise(n = n()) %>% 
+                            mutate(prop = (100*n)/sum(n))
+
+
+kable(aces_per_side_and_hand, 
+      caption = "Ace Proportion by Server Hand, Receiver Hand and Side of Court",
+      align = c("c","c","c","c","c","c"))
+
+
+ggplot(data = aces_per_side_and_hand %>% filter(serve_classification == "Ace"), aes(x = side, y = prop, fill = side)) + 
+  geom_bar(stat = "identity") + 
+  geom_text(aes(label = paste(round(prop, 1), "%", sep ="")), vjust = 1.5, colour = "black") +
+  ggtitle("Ace Proportion by Combination of Server Hand and Receiver Hand") + 
+  xlab("Side of Court") + 
+  ylab("Proportion") + 
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  guides(fill = guide_legend(title = "Side")) + 
+  facet_grid(receiver_hand ~ server_hand)
+
+
+```
+
+
+
+
+
+
+
+
+```{r aces_by_server}
+aces_by_server     <- atp_serves %>% 
+                            group_by(server, serve_classification) %>% 
+                            summarise(n = n()) %>% 
+                            mutate(prop = (100*n) / sum(n))
+
+
+
+
+ggplot(data = aces_by_server) + 
+  geom_bar(stat = "identity", aes(x = serve_classification, y = prop, fill = serve_classification)) + 
+  facet_wrap(~server, scale = "free_y")
+
+
+
+
+ggplot(data = (aces_by_server %>% 
+                 filter(serve_classification == "Ace") %>% 
+                 arrange(desc(prop)) %>% 
+                 head(15)), 
+        aes(x = reorder(server, prop), y = prop, colour = prop)) + 
+        geom_bar(stat = "identity") + 
+        coord_flip() + 
+        xlab("Player") + 
+        ylab("Ace Proportion") +
+        geom_text(aes(label = paste(round(prop, 1), "%", sep ="")), hjust = 1.2, colour = "white") +
+        ggtitle("Top 15 Ace Proportions") + 
+        scale_colour_gradientn(colours = rainbow(4)) +
+        theme(legend.position = "none", plot.title = element_text(hjust = 0.5))
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+#### Aces by Player and Speed
+
+```{r}
+
+aces_by_player_and_speed <- atp_serves %>% 
+                            group_by(server, serve_classification) %>% 
+                            summarise(speed = mean(speed)) %>%
+                            spread(key = serve_classification, value = speed) %>%
+                            mutate(diff = Ace - Other) %>%
+                            na.omit %>%
+                            arrange(desc(diff)) %>% 
+                            head(15)
+
+
+
+
+
+
+ggplot(data = aces_by_player_and_speed, 
+        aes(x = reorder(server, diff), y = diff, colour = diff)) + 
+        geom_bar(stat = "identity") + 
+        coord_flip() + 
+        xlab("Player") + 
+        ylab("Speed (m/s)") +
+        geom_text(aes(label = round(diff, 1)), hjust = 1.2, colour = "white") +
+        ggtitle("Top 15 Players for Ace Speed Minus Avg Player Serving Speed") + 
+        scale_colour_gradientn(colours = rainbow(4)) +
+        theme(legend.position = "none", plot.title = element_text(hjust = 0.5))
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Classification Models
+## Training and Test
+
+```{r training_and_test}
+
+set.seed(1000)
+idx <- sample(nrow(df), nrow(df) * (2/3)) 
+
+tr  <- df[idx,]
+ts  <- df[-idx,]
+
+
+
+ts2 <- atp_serves[-idx,]
+
+
+tr  <- tr %>% dplyr::select(-server_hand, -receiver_hand, -duration.arc3)
+ts  <- ts %>% dplyr::select(-server_hand, -receiver_hand, -duration.arc3)
+
+```
+
+
+
+
+
+
+
+### Boxplot of Data
+
+```{r}
+
+df_long1 <- gather(data = df, 
+                   key = variables, 
+                   value = stat, 
+                   start.y, 
+                   start.z, 
+                   start.1:angle.change, 
+                   center.x:point, 
+                   winner_age,
+                   loser_age,
+                   -direction.change)
+       
+                
+ggplot(df_long1) + 
+  geom_boxplot(aes(x = serve_classification, y = stat, fill = serve_classification)) + 
+  facet_wrap(~variables, scale = "free_y")
+
+
+
+
+df_long2 <- gather(data = df, 
+                   key = variables,
+                   value = stat,
+                   speed:height_off_bounce,
+                   angle.change:duration.arc1, 
+                   set,
+                   diff_age,
+                   diff_start.y,
+                   centre_x_centre_y,
+                   diff_from_player_avg_speed)
+
+
+ggplot(df_long2) + 
+  geom_boxplot(aes(x = serve_classification, y = stat, fill = serve_classification)) + 
+  facet_wrap(~variables, scale = "free_y")
+
+
+
+ggplot(data = tr) + 
+  geom_density(aes(x = centre_x_centre_y, group = serve_classification, colour = serve_classification))
+
+
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+### Random Forest and Variable Selection Based Off Accuracy Measures
+
+```{r random_forest}
+
+tr_rf   <- tr %>% 
+            dplyr::select(-serve_classification) %>% 
+            randomForest(tr$serve_classification,
+                          ntree=2000, 
+                          importance = TRUE)
+
+
+pred_rf <- predict(tr_rf, 
+                   ts %>% dplyr::select(-serve_classification), 
+                   type="class") #Prediction using test data
+
+df_rf <- data.frame(Actual = ts$serve_classification, 
+                    Predicted = pred_rf,
+                    stringsAsFactors = FALSE)
+
+table(Actual = ts$serve_classification, Predicted = pred_rf)
+
+
+
+rf_imp <- data.frame(Var = rownames(tr_rf$importance), tr_rf$importance, stringsAsFactors = FALSE) %>%
+                     arrange(desc(MeanDecreaseAccuracy))
+
+varImpPlot(tr_rf, sort = TRUE)
+
+
+
+
+
+
+
+
+### Filtering the Columns Based Off Importance ###
+
+rf_imp$dummy <- ifelse(rf_imp$MeanDecreaseGini > 2.8 | rf_imp$MeanDecreaseAccuracy > 0.001, 1, 0)
+rf_imp       <- rf_imp[which(rf_imp$dummy == 1),]
+rf_var_list  <- rf_imp$Var
+rf_var_list[length(rf_var_list) + 1] <- "serve_classification"
+
+
+
+
+tr <- tr[, which(colnames(tr) %in% rf_var_list)]
+ts <- ts[, which(colnames(ts) %in% rf_var_list)]
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+### Random Forest With Most Important Variables
+
+```{r random_forest2}
+
+tr_rf   <- tr %>% 
+            dplyr::select(-serve_classification) %>% 
+            randomForest(tr$serve_classification,
+                         ntree=2000, 
+                         importance = TRUE)
+
+
+pred_rf <- predict(tr_rf, 
+                   ts %>% dplyr::select(-serve_classification), 
+                   type="class") #Prediction using test data
+
+
+df_rf <- data.frame(Actual = ts$serve_classification, 
+                    Predicted = pred_rf,
+                    stringsAsFactors = FALSE)
+
+
+(rf_table <- table(Actual = ts$serve_classification, Predicted = pred_rf))
+
+
+
+rf_imp <- data.frame(Var = rownames(tr_rf$importance), tr_rf$importance, stringsAsFactors = FALSE) %>%
+          arrange(desc(MeanDecreaseAccuracy))
+
+
+varImpPlot(tr_rf, sort = TRUE)
+
+```
+
+
+
+
+
+
+
+## SVM
+
+### SVM Radial
+
+```{r svm_radial}
+
+tr_svm_radial   <- svm(serve_classification ~ ., 
+                      data = tr, 
+                      kernel = "radial")
+
+
+pred_svm_radial <- predict(tr_svm_radial, ts)          
+df_svm_radial   <- data.frame(Actual = ts$serve_classification, 
+                              Predicted = pred_svm_radial) 
+
+
+(svm_radial_table <- table(ts$serve_classification, pred_svm_radial))
+
+```
+
+
+
+
+
+
+
+
+
+
+
+### SVM Linear
+
+```{r svm_linear}
+
+tr_svm_linear   <- svm(serve_classification ~ ., 
+                      data = tr, 
+                      kernel = "linear")
+
+
+pred_svm_linear <- predict(tr_svm_linear, ts)          
+df_svm_linear   <- data.frame(Actual = ts$serve_classification, 
+                              Predicted = pred_svm_linear) 
+
+
+(svm_linear_table <- table(ts$serve_classification, pred_svm_linear))
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+### SVM Polynomial
+
+```{r svm_polynomial}
+
+tr_svm_polynomial   <- svm(serve_classification ~ ., 
+                      data = tr, 
+                      kernel = "polynomial",
+                      degree = 2)
+
+
+pred_svm_polynomial <- predict(tr_svm_polynomial, ts)          
+df_svm_polynomial   <- data.frame(Actual = ts$serve_classification, 
+                                  Predicted = pred_svm_polynomial) 
+
+
+(svm_polynomial_table <- table(ts$serve_classification, pred_svm_polynomial))
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+### Decision Tree 
+
+```{r decision_tree}
+
+tr_decisiontree <- rpart(serve_classification ~ ., 
+                         data=tr,
+                         method="class")         
+
+prp(tr_decisiontree)     
+
+
+
+pred_decisiontree <- predict(tr_decisiontree,              
+                             ts, 
+                             type="class")
+
+
+df_decisiontree   <- data.frame(Actual    = ts$serve_classification, 
+                                Predicted = pred_decisiontree,
+                                stringsAsFactors = FALSE) 
+
+
+(decision_tree_table <- table(Actual    = ts$serve_classification, 
+                              Predicted = pred_decisiontree))
+
+
+```
+
+
+
+
+
+
+
+
+### LDA
+
+```{r LDA}
+# lda_sub_df <- tr %>% select()
+#
+# num_of_aces <- tr %>% group_by(serve_classification) %>% summarise(n = n()) %>% mutate(prop = n/sum(n))
+#
+# lda_model <- lda(serve_classification ~ .,                    
+#                  data = tr,    
+#                  prior = c(num_of_aces$prop[1], num_of_aces$prop[2]),         
+#                  kernel="radial")
+# 
+# pred_lda <- predict(lda_model, ts, type="class")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+### Penalized LDA
+
+```{r penalizedLDA}
+
+cls <- ifelse(tr[,"serve_classification"] == "Ace", 2, 1)
+# set.seed(1)
+# tr_plda <- PenalizedLDA(as.matrix(tr[,-c(21)]), cls, 
+#                         as.matrix(ts[,-c(21)]), lambda=0.001, K=1)
+# 
+# 
+# 
+# table(Actual = ts$serve_classification, tr_plda$ypred)
+
+```
+
+
+
+
+
+
+### XGBoost
+
+```{r xgboost}
+
+
+cls <- ifelse(tr[,"serve_classification"] == "Ace", 2, 1)
+
+dtrain <- tr %>% 
+          dplyr::select(-serve_classification) %>% 
+          as.matrix %>% 
+          xgb.DMatrix(label=cls)
+
+param <- list(max.depth = 6, eta = 0.3, silent = 1)
+tr_xgb <- xgb.train(param, dtrain, nthread = 2, nround = 10)
+
+
+ts_matrix <- ts %>% 
+              dplyr::select(-serve_classification) %>% 
+              as.matrix
+
+pxgb <- round(predict(tr_xgb, ts_matrix), 0)
+
+pxgb <- ifelse(pxgb == 2, "Ace", "Other")
+pxgb <- as.factor(pxgb)
+
+
+
+
+(xgboost_table <- table(ts$serve_classification, pxgb))
+
+df_xgboost   <- data.frame(Actual    = ts$serve_classification, 
+                           Predicted = pxgb,
+                           stringsAsFactors = FALSE) 
+
+
+
+```
+
+
+
+
+
+
+
+
+
+### Logit
+
+It was important to explore the Logistic Regression and Probit models due to the separation of some variables in the data with respect to the Serve Classification. For example, if we look at a plot of the speed of a serve and distinguish the serves by "Ace" or "Other", we can see a distinct relationship between the two. This plot is shown below.
+
+```{r binary_plot_speed}
+
+ggplot(data = tr, aes(x = speed, y = ifelse(serve_classification == "Ace", 1, 0), colour = serve_classification)) + 
+  geom_point() +
+  xlab("Speed") + 
+  ylab("Ace/Other") + 
+  ggtitle("Aces by Speed") + 
+  theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+
+
+```{r logit}
+tr_logit   <- glm(serve_classification ~ ., family = binomial(link="logit"), data = tr)
+tr_logit %>% summary
+
+tr_logit   <- suppressWarnings(step(tr_logit, trace = FALSE))
+
+
+
+pred_logit <- predict(tr_logit, ts, type="response")
+pred_logit <- ifelse(pred_logit >= 0.5, "Other", "Ace")
+
+df_logit   <- data.frame(Actual    = ts$serve_classification, 
+                         Predicted = pred_logit,
+                         stringsAsFactors = FALSE) 
+
+
+(logit_table <- table(Actual    = ts$serve_classification, 
+                      Predicted = pred_logit))
+
+
+
+```
+
+The Logistic Regression model has performed extremely well, with an overall misclassification error of `r logit_table[1, 2] + logit_table[2, 1]`. Encouragingly, the actual number of correctly predicted aces was also impressive, with the model correctly predicting `r logit_table[1, 1]` out of the `r sum(logit_table[1, ])` aces in the training set. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+### Probit
+
+```{r probit}
+tr_probit   <- glm(serve_classification ~ ., family = binomial(link="probit"), data = tr)
+tr_probit %>% summary
+
+tr_probit   <- suppressWarnings(step(tr_probit, trace = FALSE))
+
+
+
+pred_probit <- predict(tr_probit, ts, type="response")
+pred_probit <- ifelse(pred_probit >= 0.5, "Other", "Ace")
+
+df_probit   <- data.frame(Actual    = ts$serve_classification, 
+                          Predicted = pred_probit,
+                          stringsAsFactors = FALSE) 
+
+
+(probit_table  <- table(Actual    = ts$serve_classification, 
+                        Predicted = pred_probit))
+
+
+
+```
+
+The Probit model didn't perform as strongly as the Logistic Regression model, with the number of misclassifications being `r probit_table[1, 2] + probit_table[2, 1]` and the number of correctly predicted aces being `r probit_table[1, 1]`. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+### Projection Pursuit Classification Tree
+
+```{r PPtreeViz}
+
+# tr_pp <- PPTreeclass(serve_classification ~ ., data = tr, "LDA")
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+### All Predictions Combined
+
+In order to compare the results of each classification method, I've created a data frame of all predictions side by side called "comparison". In addition, I created the data frame "error_count" to show the total misclassifications for each class along with the number of correctly predicted aces, so the methods can be directly compared to one another.  
+
+```{r comparison}
+comparison <- data.frame(Actual            = ts$serve_classification,
+                         'Random Forest'   = df_rf$Predicted,
+                         'SVM Radial'      = df_svm_radial$Predicted,
+                         'SVM Linear'      = df_svm_linear$Predicted,
+                         'SVM Polynomial'  = df_svm_polynomial$Predicted,
+                         'Decision Tree'   = df_decisiontree$Predicted,
+                         XGBoost           = df_xgboost$Predicted,
+                         Logit             = df_logit$Predicted,
+                         Probit            = df_probit$Predicted)
+
+
+
+error_count <- data.frame('Random Forest'  = c(sum(comparison$Random.Forest  != comparison$Actual), rf_table[1, 1]),
+                          'SVM Radial'     = c(sum(comparison$SVM.Radial     != comparison$Actual), svm_radial_table[1, 1]), 
+                          'SVM Linear'     = c(sum(comparison$SVM.Linear     != comparison$Actual), svm_linear_table[1, 1]),
+                          'SVM Polynomial' = c(sum(comparison$SVM.Polynomial != comparison$Actual), svm_polynomial_table[1, 1]),
+                          'Decision Tree'  = c(sum(comparison$Decision.Tree  != comparison$Actual), decision_tree_table[1, 1]),
+                          XGBoost          = c(sum(comparison$XGBoost        != comparison$Actual), xgboost_table[1, 1]),
+                          Logit            = c(sum(comparison$Logit          != comparison$Actual), logit_table[1, 1]),
+                          Probit           = c(sum(comparison$Probit         != comparison$Actual), probit_table[1, 1]))
+
+rownames(error_count) <- c("Total Misclassifications", "Correct Ace Predictions")
+
+
+
+error_count$Best <- c(ifelse(min(error_count[1,]) == error_count$Random.Forest[1],  "Random Forest",
+                      ifelse(min(error_count[1,]) == error_count$SVM.Radial[1],     "SVM Radial",
+                      ifelse(min(error_count[1,]) == error_count$SVM.Linear[1],     "SVM Linear",
+                      ifelse(min(error_count[1,]) == error_count$SVM.Polynomial[1], "SVM Polynomial",
+                      ifelse(min(error_count[1,]) == error_count$Decision.Tree[1],  "Decision Tree",
+                      ifelse(min(error_count[1,]) == error_count$XGBoost[1],        "XGBoost", "Logit")))))),
+                    
+                      ifelse(max(error_count[2,]) == error_count$Random.Forest[2],  "Random Forest",
+                      ifelse(max(error_count[2,]) == error_count$SVM.Radial[2],     "SVM Radial",
+                      ifelse(max(error_count[2,]) == error_count$SVM.Linear[2],     "SVM Linear",
+                      ifelse(max(error_count[2,]) == error_count$SVM.Polynomial[2], "SVM Polynomial",
+                      ifelse(max(error_count[2,]) == error_count$Decision.Tree[2],  "Decision Tree",
+                      ifelse(max(error_count[2,]) == error_count$XGBoost[2],        "XGBoost", "Logit")))))))
+
+
+kable(error_count, caption = "Model Performance", align = c("c","c","c","c","c","c","c","c","c"))
+                         
+```
+
+As shown in the table, given the variables chosen, the best classification method in terms of misclassification rate is the `r error_count$Best[1]` model with `r min(error_count[1, 1:(ncol(error_count)-1)])` misclassifications. The best model in terms of the number of correctly predicted aces is the `r error_count$Best[2]` model with `r max(error_count[2, 1:(ncol(error_count)-1)])` correctly predicted aces.   
+
+
+
+
+
+
+
+
+
+
+
+
+
+### Hybrid Classification Using Majority Voting
+
+It is quite well known that averaging out various modelling techniques can further improve the accuracy of the task at hand, which is the basis behind using a form of majority vote in the upcoming chunk. Originally I had used all classification methods and given them a scaled weighting based off their performance in the test set, but it seemed as though there were a few methods that were just ruining the accuracy of the hybrid model, so instead I've only used the Linear SVM, the Decision Tree and the Logistic Regression models. Each model has been given an equal weighting, so basically if at least two of the models predicted an Ace, then the hybrid classification will be an Ace, otherwise the prediction will not be an Ace. 
+
+```{r}
+
+# weights <- c(sum(error_count[1, 1:(ncol(error_count) - 1)]) / ((ncol(error_count)-1) * error_count[1, 1:(ncol(error_count) - 1)]))
+# 
+# weights <- unlist(weights)
+# weights <- weights[c("SVM.Linear", "Decision.Tree", "Logit")]
+# weights <- (weights / sum(weights)) * length(weights)
+
+
+weights        <- c(1,1,1)
+names(weights) <- c("SVM.Linear", "Decision.Tree", "Logit")
+
+
+hybrid_comparison <- comparison %>% dplyr::select(Actual, SVM.Linear, Decision.Tree, Logit)
+
+
+for (j in 1:ncol(hybrid_comparison)) {
+  
+  hybrid_comparison[, j] <- as.character(hybrid_comparison[, j])
+  hybrid_comparison[, j] <- ifelse(hybrid_comparison[, j] == "Other", 0, 1)
+ 
+  
+}
+
+
+
+
+hybrid_comparison$weighted_pred <- ifelse(hybrid_comparison$SVM.Linear     * weights["SVM.Linear"] + 
+                                          hybrid_comparison$Decision.Tree  * weights["Decision.Tree"] + 
+                                          hybrid_comparison$Logit          * weights["Logit"] >= 2,
+                                           
+                                          "Ace", "Other")
+
+
+
+for (j in 1:(ncol(hybrid_comparison)-1)) {
+  
+  hybrid_comparison[, j] <- ifelse(hybrid_comparison[, j] == 0, "Other", "Ace")
+  hybrid_comparison[, j] <- as.character(hybrid_comparison[, j])
+  
+}
+
+
+(hybrid_table <- table(Actual    = hybrid_comparison$Actual, 
+                       Predicted = hybrid_comparison$weighted_pred))
+
+
+```
+
+Ultimately, the hybrid classification model including only the three model types has performed better than any individual model. It has the lowest misclassification rate of all models `r paste("Misclassifications = ", hybrid_table[1, 2] + hybrid_table[2, 1], sep = "")` but not the highest rate of correctly predicted aces (`r hybrid_table[1, 1]` compared to `r max(error_count[2, ncol(error_count)-1])`)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
