@@ -1,7 +1,7 @@
 ---
 title: "Winners and Errors Classification"
 author: "Dean"
-date: "24 July 2017"
+date: "2 Aug 2017"
 output: html_document
 ---
 
@@ -11,11 +11,20 @@ knitr::opts_chunk$set(echo    = TRUE,
                       warning = FALSE, 
                       message = FALSE, 
                       error   = FALSE,
-                      cache   = FALSE)
+                      cache   = TRUE)
 
 options(scipen = 999)
 
 ```
+
+
+
+# Introduction
+
+This project involved deep analysis into the aspects that distinguish winners from errors. The majority of shots in tennis end as errors, of which they are segmented between forced and unforced errors. However, using multiple machine learning algorithms and the ball-tracking data from Roger Federer's 2017 Australian Open matches, I attempted to see whether this task would achieve positive results, or whether the predictions were inaccurate. 
+
+
+
 
 
 
@@ -77,69 +86,12 @@ df <- df %>%
       filter(is.na(hitpoint) == FALSE)
 
 
-
-
-
-
-for (i in 1:nrow(df)) {
-  
-  if (df$serve.classification[i] == 0) {
-    
-    df$serve.classification[i] <- "Ace"
-    
-  } else if (df$serve.classification[i] == 1) {
-    
-    df$serve.classification[i] <- "ReturnInPlay"
-    
-  } else if (df$serve.classification[i] == 2) {
-    
-    df$serve.classification[i] <- "ReturnOutOfPlay"
-    
-  } else if (df$serve.classification[i] == 3) {
-    
-    df$serve.classification[i] <- "Fault"
-    
-  }
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  if (federer2017$serve.classification[i] == 0) {
-    
-    federer2017$serve.classification[i] <- "Ace"
-    
-  } else if (federer2017$serve.classification[i] == 1) {
-    
-    federer2017$serve.classification[i] <- "ReturnInPlay"
-    
-  } else if (federer2017$serve.classification[i] == 2) {
-    
-    federer2017$serve.classification[i] <- "ReturnOutOfPlay"
-    
-  } else if (federer2017$serve.classification[i] == 3) {
-    
-    federer2017$serve.classification[i] <- "Fault"
-    
-  }
-  
-
-  
-}
-
-
-
-
-
-
-
 df$end_of_point          <- c(rep(NA, nrow(df)-1), 1)
 
 
+
+
+# Working out which shot was the last shot for that rally 
 
 for (i in 1:(nrow(df) - 1)) {
   
@@ -168,7 +120,7 @@ for (i in 1:(nrow(df) - 1)) {
 
 
 
-df$ballmark_x_ballmark_y <- df$ballmark.x * df$ballmark.y
+df$ballmark_x_ballmark_y <- df$ballmark.x * df$ballmark.y       # Interaction variable
 df$winner                <- as.factor(df$winner)
 df$serve.classification  <- as.factor(df$serve.classification)
 df$side                  <- as.factor(df$side)
@@ -187,10 +139,10 @@ df <- df %>% dplyr::select(-matchid, -serveid)
 ```{r adding_variables2}
 
 
-#Adding Vars
+#Adding variables 
 
 df <- df %>%
-  mutate(isserver = ifelse(server == impact.player,1,0),
+  mutate(isserver = ifelse(server == impact.player,1,0),                 # Dummy for if the shot maker is the server
          retser   = ifelse(shot == 2, 1, 0),
          retser1  = ifelse(shot == 2 & serve.classification == 1, 1, 0),
          retser2  = ifelse(shot == 2 & serve.classification == 2, 1, 0))
@@ -245,6 +197,10 @@ df <- df %>%
 
 
 
+
+
+# Adding variables for the shot coming towards the player hitting the winner
+
 for (i in 2:nrow(df)) {
   
   if(df$shot[i] != 1) {             #so that only non-serves are affected
@@ -267,6 +223,8 @@ for (i in 2:nrow(df)) {
 
 
 
+
+# Speed ratio and distances to boundaries of the court
 
 df <- df %>% 
   mutate(speed.ratio = speed1/oppo.speed) %>%             #speed ratio
@@ -294,9 +252,12 @@ for (i in 3:nrow(df)) {
 
 
 
-# adding angle between fed.shot-opp.shot vector and opp.shot-opp.ballmark vector
-# doing it in one line because df doesn't want to add vectors
 
+
+
+
+
+# Adding the angle of the shots made
   
 for (i in 1:nrow(df)) {
   
@@ -314,6 +275,11 @@ for (i in 1:nrow(df)) {
   df$o.angle[i] = ifelse(o.angle > 90, 180-o.angle, o.angle)
   
 }
+
+
+
+
+
 
 
 #Now adding the angle the player hits
@@ -343,6 +309,76 @@ for (i in 1:nrow(df)) {
 
 
 
+
+# Illustration of a Rally
+
+Before applying the modelling techniques, I thought it would be a good idea to demonstrate the progression of a particular rally. 
+
+```{r fig.cap = "This plot shows the progression of a rally. The colours denote the two players and the thick line denotes the winner."}
+
+
+# Creating a Data Frame of only 1 rally with exactly 6 shots
+rally1 <- df %>% 
+  filter(final.shot == 6 & winner == 1 & id == "125322") %>% 
+  dplyr::select(impact.player, hitpoint, start.x, start.y, ballmark.x, ballmark.y, final.x, final.y)
+
+
+
+
+
+# Removing the axes lines and labels
+theme_court            <- theme_bw()
+theme_court$line       <- element_blank()
+theme_court$axis.text  <- element_blank()
+theme_court$axis.title <- element_blank()
+
+
+
+
+# Boundaries of the Court #
+courtTrace <- data.frame(x = c(-11.89, -11.89, 0, 0, 0, 0, 0, 0, 11.89, 11.89, -11.89, -11.89, 11.89, 
+                               11.89, -11.89, -6.4, -6.4, 6.4, 6.4, 6.4, -6.4),
+                         y = c(5.49, -5.49, -5.49, -6.5, -6.5, 6.5, 6.5, -5.49, -5.49, 5.49, 5.49, 
+                               4.115, 4.115, -4.115, -4.115, -4.115, 4.115, 4.115, -4.115, 0, 0),
+                         z = c(0, 0, 0, 0, 1.09, 1.09, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
+
+
+# Data frame of only the last shot of that rally (the winner)
+final_shot <- rally1[-c(1:(nrow(rally1)-1)),]
+
+
+
+
+
+# Illustration of Rally
+ggplot() +  
+  geom_path(data = courtTrace, 
+            aes(x = x, y = y),
+            color = 'black', size = 0.5) +
+  
+  geom_segment(data = courtTrace,
+               aes(x = 0, xend = 0, y = -6.5, yend = 6.5),
+               size = 0.7, 
+               color = 'darkgrey', 
+               lineend = 'round') +
+  
+  geom_path(aes(x = start.x, y = start.y, colour = impact.player, group = NA), 
+            data = rally1, 
+            arrow = arrow(length = unit(0.3,"cm"), ends = "last", type = "closed")) + 
+  
+  geom_segment(data = final_shot, 
+               aes(x = start.x, y = start.y, xend = final.x, yend = final.y, colour = impact.player, group = NA), 
+               size = 1.8, 
+               arrow = arrow(length = unit(0.3, "cm"), ends = "last", type = "closed")) +
+  theme_court + 
+  guides(colour = guide_legend("Impact Player")) + 
+  ggtitle(paste(nrow(rally1), " Point Rally Ending in a Winner", sep = "")) + 
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+```
+
+As we can see, in this particular rally, the rally started with a Federer serve and ended with a down-the-line winner by Rafael Nadal. The shot before the winner was a cross-court shot by Federer and you could see that he was on the complete opposite side of the court compared to the direction of the winner. In fact, the variables related to angle were added due to this notion. 
 
 
 
@@ -380,10 +416,13 @@ In order to determine whether the last shot of the point was a winner or error, 
 
 ```{r}
 
+
+# Filtering data frame to keep only observations that were the last shots of that rally and were not serves 
 df <- df %>% filter(end_of_point == 1) %>% filter(hitpoint != "S")
 
 
 
+# Removing unnecessary variables
 df <- df %>% dplyr::select(-server.score,
                           -receiver.score,
                           -server.won,
@@ -414,12 +453,17 @@ df <- df %>% dplyr::select(-server.score,
 # Classification Models
 ## Training and Test
 
-The data was split into 2/3rds of training data and 1/3 of test data so that all the models could be tested properly. 
+The data was split into 2/3rds of training data and 1/3 of test data so that all the models could be tested properly. Using the *caret* package, there is a function called **createDataPartition** that samples the data frame and keeps the classes balanced in both the training set and test set. This means that 2/3rds of the total amount of winners appear in the training set and the remaining 1/3 of winners appear in the test set. 
+
+Something that should be noted about the classification of winners is that all points are either winners or errors. What this means is that any prediction of a shot not being a winner means that the prediction is that the rally has ended in an error (either forced or unforced).
 
 ```{r training_and_test}
 
-set.seed(1000)
-idx <- sample(nrow(df), nrow(df) * (2/3)) 
+set.seed(10000)
+
+
+# Creating the index for the data split
+idx <- createDataPartition(df$winner, p = 2/3, list = FALSE, times = 1)
 
 tr  <- df[idx,]
 ts  <- df[-idx,]
@@ -463,7 +507,7 @@ legend(650, 0.7, c("Winner Error Rate", "OOB Error Rate", "Non-Winner Error Rate
 
 ```
 
-We can see from the plot of the Random Forest error rate as a function of the number of trees that the Out-of-Bag error is roughly 35% for the majority of values, so in reality there is no need to fit 1000 trees. This value plateaus after roughly 200 trees, which is quite rapid. The next step is to predict the test set values using the generated Random Forest model.
+We can see from the plot of the Random Forest error rate as a function of the number of trees that the Out-of-Bag error is roughly 40% for the majority of values, so in reality there is no need to fit 1000 trees. This value plateaus after roughly 200 trees, which is quite rapid. The next step is to predict the test set values using the generated Random Forest model.
 
 
 ```{r}
@@ -483,8 +527,9 @@ df_rf <- data.frame(Actual = ts$winner,
 
 ```
 
+Based off the Out-of-Bag sample, the estimated error rate on the test set was deemed to be `r paste(round(tr_rf$err.rate[nrow(tr_rf$err.rate),1]*100, 2), "%", sep = "")`. The actual error rate on the test set ended up being `r paste((rf_table1[1,2] + rf_table1[2,1] / sum(rf_table1)) * 100, "%", sep = "")`. However, this Random Forest was conducted on the entire set of variables, so the next step would be to filter out potential noise variables and then refit the Random Forest model.
 
-Based off the Out-of-Bag sample, the estimated error rate on the test set was deemed to be 35.12%. The actual error rate on the test set ended up being `r paste((rf_table1[1,2] + rf_table1[2,1] / sum(rf_table1)) * 100, "%", sep = "")`. However, this Random Forest was conducted on the entire set of variables, so the next step would be to filter out potential noise variables and then refit the Random Forest model. I created a Variable Importance Plot in order to identify any significant drops in variable importance, so that I could build a model solely using the signficiant variables. This is similar to a Scree Plot in Principal Component Analysis.
+I created a Variable Importance Plot in order to identify any significant drops in variable importance, so that I could build a model solely using the signficiant variables. This is similar to a Scree Plot in Principal Component Analysis.
 
 ```{r}
 
@@ -495,7 +540,7 @@ varImpPlot(tr_rf, sort = TRUE)
 
 ```
 
-From here we can see that the variable "start.z" was generally the most important variable in the model, together with the "start.x" position. The variable "start.z" indicates the height of the ball when hit and "start.x" indicates the depth of the ball when hit. This makes sense as the majority of smashes are at a increased height to an average shot, and a smash is more likely to be a winner than an ordinary shot. This is the same with the x position. If the player hitting the ball hits it from the baseline, he/she is less likely to hit a winner than if the ball has dropped short and closer to the net. From here, I filtered the variables based off a fairly arbitrary criterion. The variables that I kept were the ones that either had a "MeanDecreaseGini" of greater than 4.5 or a "MeanDecreaseAccuracy" of greater than 0.0003.
+From here we can see that the variable "start.z" was generally the most important variable in the model, together with the "start.x" position. The variable "start.z" indicates the height of the ball when hit and "start.x" indicates the depth of the court when the shot is hit. This makes sense as the majority of smashes are at a increased height to an average shot, and a smash is more likely to be a winner than an ordinary shot. This is the same with the x position. If the player hitting the ball hits it from the baseline, he/she is less likely to hit a winner than if the ball has dropped short and closer to the net. From here, I filtered the variables based off a fairly arbitrary criterion. The variables that I kept were the ones that either had a "MeanDecreaseGini" of greater than 4.5 or a "MeanDecreaseAccuracy" of greater than 0.0003.
 
 ```{r filtering_columns_using_randomForest}
 
@@ -565,7 +610,7 @@ df_rf <- data.frame(Actual = ts$winner,
 
 ```
 
-The classifier slightly improved from earlier, with `r rf_table[1,2] + rf_table[2,1]` misclassifications compared to `r rf_table1[1,2] + rf_table1[2,1]` previously. In this case, the classifier predicted an Out-of-Bag error rate of 33.78%, compared to 35.12% in the first fit of the Random Forest. There were four errors in the first fit of the model that were now correctly classified as winners, which was encouraging. 
+The classifier had `r rf_table[1,2] + rf_table[2,1]` misclassifications compared to `r rf_table1[1,2] + rf_table1[2,1]` previously. In this case, the classifier predicted an Out-of-Bag error rate of `r paste(round(tr_rf$err.rate[nrow(tr_rf$err.rate),1]*100, 2), "%", sep = "")`. The most positive result was seeing that the number of correctly predicted winners increased from `r rf_table1[2,2]` to `r rf_table[2,2]`. 
 
 
 
@@ -573,7 +618,7 @@ The classifier slightly improved from earlier, with `r rf_table[1,2] + rf_table[
 
 ## SVM
 
-The next idea was to use Support Vector Machines, which find the boundary which gives the best separation between classes. 
+The next idea was to use Support Vector Machines, which is a method that finds the boundary which gives the best separation between classes. 
 
 ### SVM Radial
 
@@ -595,7 +640,7 @@ df_svm_radial   <- data.frame(Actual = ts$winner,
 
 ```
 
-As we can see, the Radial SVM had `r svm_radial_table[1,2] + svm_radial_table[2,1]` misclassifications, meaning an error rate of `r paste(round(((svm_radial_table[1,2] + svm_radial_table[2,1]) * 100) / sum(svm_radial_table), 2), "%", sep = "")`. The model correctly predicted `r svm_radial_table[2,2]` winners out of the 111 in the test set. 
+As we can see, the Radial SVM had `r svm_radial_table[1,2] + svm_radial_table[2,1]` misclassifications, meaning an error rate of `r paste(round(((svm_radial_table[1,2] + svm_radial_table[2,1]) * 100) / sum(svm_radial_table), 2), "%", sep = "")`. The model correctly predicted `r svm_radial_table[2,2]` winners out of the 111 in the test set, which was fairly poor. 
 
 
 
@@ -625,7 +670,7 @@ df_svm_linear   <- data.frame(Actual = ts$winner,
 
 ```
 
-This model correctly predicted `r svm_linear_table[2,2]` winners and had a total of `r svm_linear_table[1,2] + svm_linear_table[2,1]` misclassifications. 
+This model correctly predicted `r svm_linear_table[2,2]` winner and had a total of `r svm_linear_table[1,2] + svm_linear_table[2,1]` misclassifications. We can see that the model has struggled to classify any winners. 
 
 
 
@@ -657,7 +702,7 @@ df_svm_polynomial   <- data.frame(Actual = ts$winner,
 
 ```
 
-This method had `r svm_polynomial_table[1,2] + svm_polynomial_table[2,1]` misclassifications and `r svm_polynomial_table[2,2]` correctly predicted winners. 
+This method had `r svm_polynomial_table[1,2] + svm_polynomial_table[2,1]` misclassifications and `r svm_polynomial_table[2,2]` correctly predicted winners. Similarly to the previous SVM methods, the model has generally struggled to classify any winners. 
 
 
 
@@ -689,7 +734,7 @@ prp(tr_decisiontree)
 
 ```
 
-The decision tree only uses 6 variables: "start.z", "x32", "oppo.speed", "oppo.ballmark.y", "oppo_ballmark_x_ballmark_y" and "base.dist". It should be noted that "x32" is the fourth coefficient in the 3-degree polynomial describing the last arc of the shot for the x-dimension. What is interesting to note is that the opponent's shot components show up in this model, meaning the placement of the opponent's shot and the speed of the opponent's shot are crucial in determining whether a shot will be an ace. While this is intuitive, it was encouraging to see this show up in the data. 
+The decision tree above is using many variables, with some of the variables being used multiple times. 
 
 
 
@@ -710,7 +755,7 @@ df_decisiontree   <- data.frame(Actual    = ts$winner,
 
 ```
 
-The decision tree had a total of `r decision_tree_table[1,2] + decision_tree_table[2,1]` misclassifications and correctly predicted `r decision_tree_table[2,2]` winners out of the 111. 
+The decision tree had a total of `r decision_tree_table[1,2] + decision_tree_table[2,1]` misclassifications and correctly predicted `r decision_tree_table[2,2]` winners out of the 111. This was a fairly strong performance, but may have had such a high amount of errors due to overfitting issues.  
 
 
 
@@ -725,7 +770,7 @@ The decision tree had a total of `r decision_tree_table[1,2] + decision_tree_tab
 
 ### XGBoost
 
-Another model type that I used was a Gradient Boosting model, which is conducted through the R library "xgboost". I set some of the parameters based off a trial and error methodology, so that's where the various values came from. 
+Another model type that I used was a Gradient Boosting model, which is conducted through the R library *xgboost*. I set some of the parameters based off a trial and error methodology, so that's where the various values came from. 
 
 ```{r xgboost}
 
@@ -763,7 +808,7 @@ df_xgboost   <- data.frame(Actual    = ts$winner,
 
 ```
 
-Overall, the Gradient Boosting algorithm performed fairly well. It correctly predicted `r xgboost_table[2,2]` winners but had a total of `r xgboost_table[1,2] + xgboost_table[2,1]` misclassifications, which was quite high. 
+Overall, the Gradient Boosting algorithm performed very well. It correctly predicted `r xgboost_table[2,2]` winners but had a total of `r xgboost_table[1,2] + xgboost_table[2,1]` misclassifications, which was quite high. 
 
 
 
@@ -840,7 +885,7 @@ df_probit   <- data.frame(Actual    = ts$winner,
 
 ```
 
-The Probit model didn't perform as strongly as the Logistic Regression model, with the number of misclassifications being `r probit_table[1, 2] + probit_table[2, 1]` and the number of correctly predicted winners being `r probit_table[2, 2]`. 
+The Probit model performed well, with the number of misclassifications being `r probit_table[1, 2] + probit_table[2, 1]` and the number of correctly predicted winners being `r probit_table[2, 2]`. 
 
 
 
@@ -922,7 +967,7 @@ Part of the diagnosis of the model performance involved looking at a subset of o
 
 ## Identifying Patterns in Clear Winners vs. Unpredictable Winners
 
-I created a subset data frame of the test set that included observations that were winners and had at least 5 models predict a winner, or observations that were not winners and had no models predicting a winner. This data frame was called "identifying_trends". 
+I created a subset data frame of the test set that included observations that *were* winners and had at least 5 models predict a winner, or observations that *were not* winners and had no models predicting a winner. This data frame was called "identifying_trends". 
 
 ```{r}
 
@@ -935,10 +980,11 @@ identifying_trends$Pred_SVM_Radial     <- ifelse(identifying_trends$SVM.Radial =
 identifying_trends$Pred_SVM_Linear     <- ifelse(identifying_trends$SVM.Linear == "0", 0, 1)
 identifying_trends$Pred_SVM_Polynomial <- ifelse(identifying_trends$SVM.Polynomial == "0", 0, 1)
 identifying_trends$Pred_XGBoost        <- ifelse(identifying_trends$XGBoost == "0", 0, 1)
+identifying_trends$Pred_Decision_Tree  <- ifelse(identifying_trends$Decision.Tree == "0", 0, 1)
 
 
 identifying_trends <- identifying_trends %>% 
-                        dplyr::select(-Random.Forest, -SVM.Radial, -SVM.Linear, -SVM.Polynomial, -XGBoost)
+                        dplyr::select(-Random.Forest, -SVM.Radial, -SVM.Linear, -SVM.Polynomial, -XGBoost, -Decision.Tree)
 
 identifying_trends$countif   <- NA
 identifying_trends$Dummy     <- NA
@@ -971,12 +1017,11 @@ identifying_trends <- identifying_trends %>%
 
 ```
 
-
 From here, I created various long format data frames from the "identifying_trends" data frame and inspected each variable one by one. 
 
 ```{r}
 
-ident_trends_long1 <- identifying_trends %>% gather(key = variable, value = stat, seconds:z32)
+ident_trends_long1 <- identifying_trends %>% gather(key = variable, value = stat, seconds:z12)
 
 
 ggplot(data = ident_trends_long1, aes(x = winner, y = stat)) + 
@@ -1076,7 +1121,7 @@ legend(650, 0.7, c("Winner Error Rate", "OOB Error Rate", "Non-Winner Error Rate
 
 ```
 
-Similar to the previous version of the Random Forest model, the OOB Error Rate was roughly 35% and this plateaued after only 400 trees. 
+Similar to the previous version of the Random Forest model, the OOB Error Rate was roughly 40% and this plateaued after only 400 trees. 
 
 ```{r}
 
@@ -1099,7 +1144,7 @@ varImpPlot(tr_rf2, sort = TRUE)
 
 ```
 
-With this subset of variables, the Variable Importance Plot still shows the variable "start.z" as being the most important, based off the "Mean Decrease Gini" index. 
+With this subset of variables, the Variable Importance Plot still shows the variable "start.z" as being the most important, based off the "Mean Decrease Gini" index. The next most important variable was "ballmark.y", which relates to the y-position of the player's shot. 
 
 
 ```{r}
@@ -1108,8 +1153,7 @@ With this subset of variables, the Variable Importance Plot still shows the vari
 
 ```
 
-In this case, the classifier predicted an Out-of-Bag error rate of 34.23%, compared to 33.78% in the first fit of the Random Forest. The number of correctly predicted winners increased from `r error_count$Random.Forest[2]` to `r rf_table2[2,2]`, but the number of misclassifications increased from `r error_count$Random.Forest[1]` to `r rf_table2[1,2] + rf_table[2,1]`.
-
+In this case, the classifier predicted an Out-of-Bag error rate of `r paste(round(tr_rf2$err.rate[nrow(tr_rf2$err.rate),1]*100, 2), "%", sep = "")`, compared to `r paste(round(tr_rf$err.rate[nrow(tr_rf$err.rate),1]*100, 2), "%", sep = "")` in the first fit of the Random Forest. The number of misclassifications for this fit was `r rf_table2[1,2] + rf_table2[2,1]` compared to `r error_count$Random.Forest[1]` previously. In addition, the number of correctly predicted winners this time was `r rf_table2[2,2]` compared to `r error_count$Random.Forest[2]` previously. 
 
 
 
@@ -1134,7 +1178,7 @@ df_svm_radial2   <- data.frame(Actual = ts3$winner,
 
 ```
 
-The SVM Radial model had the more misclassifications than before, with `r svm_radial_table2[2,1] + svm_radial_table2[1,2]` misclassifications now compared to `r error_count$SVM.Radial[1]`. However, the new version correctly predicted `r svm_radial_table2[2, 2]` winners compared to `r svm_radial_table[2,2]` winners previously.
+The SVM Radial model had `r svm_radial_table2[2,1] + svm_radial_table2[1,2]` misclassifications in this fit compared to `r error_count$SVM.Radial[1]` previously. In addition, the new version correctly predicted `r svm_radial_table2[2, 2]` winners compared to `r svm_radial_table[2,2]` winners previously.
 
 
 
@@ -1161,7 +1205,7 @@ df_svm_linear2   <- data.frame(Actual = ts3$winner,
 
 ```
 
-The SVM Linear model had only `r svm_linear_table2[1,2] + svm_linear_table2[2,1]` misclassifications, but didn't predict one winner, so it is a fairly useless model in this situation. This was a significant decrease in performance compared to the earlier fit, which had only `r error_count$SVM.Linear[1]` misclassifications and correctly predicted `r error_count$SVM.Linear[2]` winners. 
+The SVM Linear model had only `r svm_linear_table2[1,2] + svm_linear_table2[2,1]` misclassifications, but didn't predict one winner, so it is a fairly useless model in this situation. The previous version of the model had `r error_count$SVM.Linear[1]` misclassifications but managed to correctly predict `r error_count$SVM.Linear[2]` winner.
 
 
 
@@ -1191,7 +1235,7 @@ df_svm_polynomial2   <- data.frame(Actual = ts3$winner,
 
 ```
 
-The second version of the SVM Polynomial model improved slightly upon the first version. The total number of misclassifications was now `r svm_polynomial_table2[1,2] + svm_polynomial_table2[2,1]` compared to `r error_count$SVM.Polynomial[1]` misclassifications previously. In addition, the total number of correctly predicted winners was `r svm_polynomial_table2[2,2]` in the second version compared to `r error_count$SVM.Polynomial[2]` previously. 
+The second version of the SVM Polynomial model performed worse than the first version. The total number of misclassifications was now `r svm_polynomial_table2[1,2] + svm_polynomial_table2[2,1]` compared to `r error_count$SVM.Polynomial[1]` misclassifications previously. In addition, the total number of correctly predicted winners was `r svm_polynomial_table2[2,2]` in the second version compared to `r error_count$SVM.Polynomial[2]` previously. 
 
 
 
@@ -1221,7 +1265,7 @@ prp(tr_decisiontree2)
 
 ```
 
-This version of the decision tree used similar variables to the first version. This time the model included "speed.diff", which was the difference between the speed of the player's shot and the opponent's shot. 
+In this version of the decision tree model, the model used a much smaller number of splits, which led to a high number of misclassifications previously, along with a high number of correct winner predictions. 
 
 ```{r}
 
@@ -1241,7 +1285,7 @@ df_decisiontree2   <- data.frame(Actual    = ts3$winner,
 
 ```
 
-The decision tree performed worse in the second version, with a total of `r decision_tree_table2[2,2]` correctly predicted winners compared to `r error_count$Decision.Tree[2]` correctly predicted winners previously. In addition, the total number of misclassifications this time around was `r decision_tree_table2[1,2] + decision_tree_table2[2,1]` compared to `r error_count$Decision.Tree[1]` previously. 
+The decision tree performed worse in the second version in terms of correct winner predictions, with a total of `r decision_tree_table2[2,2]` correctly predicted winners compared to `r error_count$Decision.Tree[2]` correctly predicted winners previously. In contrast, the total number of misclassifications this time around was `r decision_tree_table2[1,2] + decision_tree_table2[2,1]` compared to `r error_count$Decision.Tree[1]` previously. 
 
 
 
@@ -1256,6 +1300,8 @@ The decision tree performed worse in the second version, with a total of `r deci
 
 
 ### XGBoost
+
+The first version of the XGBoost model returned very promising results, so I was fairly optimistic about this second version performing well. 
 
 ```{r xgboost2}
 
@@ -1294,7 +1340,7 @@ df_xgboost2   <- data.frame(Actual    = ts3$winner,
 
 ```
 
-The Gradient Boosting model improved its number of correct winner predictions, with `r xgboost_table2[2,2]` in the second version compared to `r error_count$XGBoost[2]` in the first version. The total number of misclassifications increased from `r error_count$XGBoost[1]` in version 1 to `r xgboost_table2[1,2] + xgboost_table2[2,1]` misclassifications in version 2. 
+The accuracy for the Gradient Boosting model decreased quite substantially, with `r xgboost_table2[2,2]` correctly predicted winners in the second version compared to `r error_count$XGBoost[2]` in the first version. The total number of misclassifications increased from `r error_count$XGBoost[1]` in version 1 to `r xgboost_table2[1,2] + xgboost_table2[2,1]` misclassifications in version 2. These results were fairly discouraging. 
 
 
 
@@ -1329,7 +1375,7 @@ df_logit2   <- data.frame(Actual    = ts3$winner,
 
 ```
 
-The Logit model performed worse in version 2, with `r logit_table2[2,2]` correctly predicted winners compared to `r error_count$Logit[2]` previously. In contrast, the second version model had a total number of `r logit_table2[1,2] + logit_table2[2,1]` misclassifications compared to `r error_count$Logit[1]` misclassifications previously. 
+The Logit model performed worse in version 2, with `r logit_table2[2,2]` correctly predicted winners compared to `r error_count$Logit[2]` previously. In addition, the second version model had a total number of `r logit_table2[1,2] + logit_table2[2,1]` misclassifications compared to `r error_count$Logit[1]` misclassifications previously. 
 
 
 
@@ -1363,7 +1409,7 @@ df_probit2   <- data.frame(Actual    = ts3$winner,
 
 ```
 
-The probit model also performed fairly poor, with only `r probit_table2[2,2]` correctly predicted winners, down from `r error_count$Probit[2]` in version 1. The improvement came in the misclassification rate, with `r probit_table2[1,2] + probit_table2[2,1]` misclassifications compared to `r error_count$Probit[1]` previously. 
+The probit model also performed fairly poor, with only `r probit_table2[2,2]` correctly predicted winners, down from `r error_count$Probit[2]` in version 1. The misclassification rate also increased, with `r probit_table2[1,2] + probit_table2[2,1]` misclassifications compared to `r error_count$Probit[1]` previously. 
 
 
 
@@ -1441,12 +1487,12 @@ kable(error_count2, caption = "Model Performance", align = c("c","c","c","c","c"
                          
 ```
 
-Ultimately, the best performing model in terms of the total number of misclassifications was the SVM Linear model, with `r error_count2$SVM.Linear[1]` misclassifications. However, closer look at the results of this method shows that it didn't actually predict any winners, so all the misclassifications are from the 111 winners in the test sample. 
+Ultimately, the best performing model in terms of the total number of misclassifications was the SVM Radial model, with `r error_count2$SVM.Radial[1]` misclassifications. However, closer look at the results of this method shows that it didn't actually predict any winners, so all the misclassifications are from the 111 winners in the test sample. 
 
 The best method in terms of number of correctly predicted winners was the XGBoost model, with `error_count2$XGBoost[2]` correctly predicted winners (out of the 111 in the test sample). 
 
 
-
+Ultimately, version two of the models were generally worse than the first version. 
 
 
 
@@ -1508,8 +1554,6 @@ rownames(all_comparisons) <- c("Misclassifications Version 1",
 
 
 
-# Reclassifying SVM Best Version so there's no ambiguity in the "Best Version" row.
-all_comparisons$SVM.Radial[5] <- "V1"
 
 
 
@@ -1555,12 +1599,13 @@ Another strategy for classification methods involves combining predictions of th
 ```{r}
 
 
-version1 <- c("SVM.Linear", "Decision.Tree", "Logit", "Probit")
-version2 <- c("Random.Forest", "SVM.Radial", "SVM.Polynomial", "XGBoost")
 
-
-hybrid_comparison   <- cbind(comparison  %>% dplyr::select(Actual, SVM.Linear, Decision.Tree, Logit, Probit),
-                             comparison2 %>% dplyr::select(Random.Forest, SVM.Radial, SVM.Polynomial, XGBoost))
+hybrid_comparison   <- cbind(comparison  %>% dplyr::select(Actual, Random.Forest,      # Version 1 Models Selected
+                                                           SVM.Linear, SVM.Polynomial, 
+                                                           Decision.Tree, XGBoost, 
+                                                           Logit, Probit),
+                             
+                             comparison2 %>% dplyr::select(SVM.Radial))                # Version 2 Models Selected
 
 
 
@@ -1576,6 +1621,10 @@ for (j in 1:ncol(hybrid_comparison)) {
 
 hybrid_comparison$Majority <- NA
 
+
+
+
+# If 4 or more models had selected a Winner, then that particular observation was classified as a winner
 
 for (i in 1:nrow(hybrid_comparison)) {
   
@@ -1640,6 +1689,9 @@ A final method used to diagnose the issues with the classification models was th
 
 X <- tr3 %>% select(-winner) %>% as.matrix
 
+
+
+#t-SNE dimension reduction (2 dimensions)
 tsne <- Rtsne(X, dims = 2)
 
 dim1 <- tsne$Y[,1]
@@ -1652,6 +1704,9 @@ tr3 <- tr3 %>% mutate(MDS1 = dim1,
 
 
 
+
+
+# Creating a scaling function and data frame for the parallel coordinate plot
 myscale <- function(x) (x - mean(x)) / sd(x)
 
 scale.dat.melt <- tr3 %>%
@@ -1665,8 +1720,7 @@ scale.dat.melt <- tr3 %>%
                                          "speed.diff", "oppo.hit.y",
                                          "oppo.hit.z", "oppo.speed", 
                                          "oppo.ballmark.y", "oppo_ballmark_x_ballmark_y",
-                                         "speed.ratio", "short.dist", 
-                                         "MDS1", "MDS2", "ids")))
+                                         "MDS1", "MDS2", "speed.ratio", "short.dist","ids")))
 
 colnames(scale.dat.melt)[1] <- "Class"
 
@@ -1677,20 +1731,83 @@ colnames(scale.dat.melt)[1] <- "Class"
 
 
 
-### Scatterplot
+
+
+
+
+
+### Scatterplots
 
 After creating the two reduced dimensions using t-SNE, it made sense to inspect a scatterplot of the dimensions and colour the points by the classification of winner and non-winner in order to identify any underlying issues with the classification task.  
 
 ```{r}
 
-ggplot(data = tr3, aes(x = MDS1, y = MDS2, colour = winner)) +
-      geom_point(size = I(3), alpha = 0.7)  +
-      labs(y = "MDS 2", x = "MDS 1", title = "t-SNE Scatterplot") +
-      theme(legend.key = element_blank(), aspect.ratio = 1, plot.title = element_text(hjust = 0.5))
+p1 <- ggplot(data = tr3, aes(x = MDS1, y = MDS2, colour = winner)) +
+  geom_point(size = I(3), alpha = 0.7)  +
+  labs(y = "MDS 2", x = "MDS 1", title = "t-SNE Scatterplot") +
+  theme(legend.key = element_blank(), aspect.ratio = 1, plot.title = element_text(hjust = 0.5))
+
+
+
+ggplotly(p1)
+
 
 ```
 
 As we can see, the points are all overlapping one another, which partially explains the issues that the models have had with classifying winners. 
+
+
+
+
+
+
+
+
+### 3D MDS Scatterplot
+
+While there was no separation between winners and non-winners in terms of the MDS values, it was also important to identify if there was any potential separation between the values in each class using three t-SNE dimensions in a 3D plot. 
+
+```{r}
+
+X <- tr3 %>% select(-winner, -MDS1, -MDS2) %>% as.matrix
+
+
+
+#t-SNE dimension reduction (3 dimensions)
+tsne <- Rtsne(X, dims = 3)
+
+dim1 <- tsne$Y[,1]
+dim2 <- tsne$Y[,2]
+dim3 <- tsne$Y[,3]
+
+
+
+
+mds_df <- tr3 %>% mutate(MDS1 = dim1,
+                         MDS2 = dim2,
+                         MDS3 = dim3)
+
+
+
+
+
+
+(p <- plot_ly(data=mds_df, x = ~MDS1, y = ~MDS2, z = ~MDS3, color = ~winner, colors = c('#BF382A', '#0C4B8E'), type="scatter3d") %>% 
+  add_markers() %>%
+  layout(scene = list(xaxis = list(title = 'MDS1'),
+                     yaxis = list(title = 'MDS2'),
+                     zaxis = list(title = 'MDS3'))))
+
+
+
+
+
+```
+
+Unfortunately, the 3D plot showed that there was no separation between classes, which further explains the modelling performances earlier. 
+
+
+
 
 
 ### Parallel Coordinate Plot
@@ -1699,13 +1816,17 @@ A Parallel Coordinate Plot was also generated in order to identify any problem v
 
 ```{r}
 
-ggplot(scale.dat.melt, 
+p1 <- ggplot(data = scale.dat.melt, 
        aes(x = Variables, y = Value, group = ids, key = ids, colour = Class, var = var)) +
-        geom_line(alpha = 0.5) +
-        scale_x_discrete(limits = levels(as.factor(scale.dat.melt$var)), expand = c(0.01,0.01)) +
-        ggtitle("Parallel Coordinate Plot") +
-        theme(plot.title = element_text(hjust = 0.5), axis.text.x  = element_text(angle = 90, vjust = 0.5)) +
-        scale_colour_brewer(type = "qual", palette = "Dark2")
+  geom_line(alpha = 0.5) +
+  scale_x_discrete(limits = levels(as.factor(scale.dat.melt$var)), expand = c(0.01,0.01)) +
+  ggtitle("Parallel Coordinate Plot") +
+  theme(plot.title = element_text(hjust = 0.5), axis.text.x  = element_text(angle = 90, vjust = 0.5)) +
+  scale_colour_brewer(type = "qual", palette = "Dark2") 
+
+
+ggplotly(p1)
+
 
 ```
 
@@ -1843,7 +1964,9 @@ Similarly to the scatterplot, we can see that the classes overlap one another fo
 
 # Conclusion
 
-Ultimately, the task at hand was difficult due to the lack of separation between the values of variables in the observations that were winners and those that weren't winners. This explained the generally poor performance of the classification methods, with each model having a test error rate of roughly 30-40%. The best model on the test set was probably the first version of the Linear SVM model, with a total number of `r svm_linear_table[2,2]` correctly predicted winners and only `r svm_linear_table[1,2] + svm_linear_table[2,1]` misclassifications. However, the model that correctly predicted the most winners was the second version of the Gradient Boosting model, with `r xgboost_table2[2,2]` correctly predicted winners out of the 111 winners in the test set. 
+Ultimately, the task at hand was difficult due to the lack of separation between the values of variables in the observations that were winners and those that weren't winners. This explained the generally poor performance of the classification methods, with each model having a test error rate of roughly 30-40%.  
 
-With more time available on this data set, I don't think I would have been able to get more encouraging results, as the t-SNE scatterplot and Parallel Coordinate Plot showed a lack of separation between classes for basically all variables. 
+With more time available on this data set, I don't think I would have been able to get more encouraging results, as the t-SNE scatterplots and Parallel Coordinate Plot showed a lack of separation between classes for basically all variables. 
+
+There may have been other variables that could have been trialled, such as variables relating to "at-the-net" shots, which would have partially shown up in the variable "start.z" as these shots are usually smashes, but it makes sense that you expect there to be more winners if at least one of the players is standing close to the net. 
 
